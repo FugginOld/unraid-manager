@@ -1,3 +1,4 @@
+import json
 import os
 import re
 import unittest
@@ -22,12 +23,11 @@ REQUIRED = [
 # docs/verification/graphql-schema-raven.json is a committed introspection
 # dump. Nothing validated fixtures against it, which is how the brief's
 # invented `parityCheckStatus` leaf-string and `parityHistory.status: "OK"`
-# shipped unnoticed — both rejected by the live schema. This walks each
-# fixture's `data` against the schema's own type map: an unknown field or a
-# scalar/object mismatch fails the fixture, not just a live capture.
+# shipped unnoticed — both rejected by the live schema, and both now rejected
+# here too: unknown-field, object/scalar, enum-membership and scalar-type
+# mismatches all fail the fixture, not just a live capture.
 
 def _load_schema():
-    import json
     with open(os.path.abspath(SCHEMA_PATH), 'r', encoding='utf-8') as fh:
         doc = json.load(fh)
     return {t['name']: t for t in doc['__schema']['types'] if t.get('name')}
@@ -49,23 +49,62 @@ def _field_shape(field):
 
 QUERY_FIELDS = {f['name']: _field_shape(f) for f in TYPES['Query']['fields']}
 
+# Declared GraphQL scalar name -> the Python type a JSON-decoded value must
+# have. bool is deliberately excluded from the numeric checks: isinstance(True,
+# int) is True in Python, and a stray boolean must not pass as a BigInt.
+SCALAR_TYPES = {
+    'String': str, 'ID': str, 'PrefixedID': str, 'DateTime': str,
+    'Boolean': bool,
+    'Int': int,
+    'Float': (int, float), 'BigInt': (int, float),
+}
+
+
+def _scalar_ok(type_name, value):
+    py_type = SCALAR_TYPES.get(type_name)
+    if py_type is None:
+        return True  # unmapped scalar (JSON/Port/URL/...) - not exercised here
+    if py_type is bool:
+        return isinstance(value, bool)
+    if py_type is int:
+        return isinstance(value, int) and not isinstance(value, bool)
+    return isinstance(value, py_type) and not isinstance(value, bool)
+
 
 def _check_node(value, kind, type_name, path):
     if value is None:
         return
-    if kind == 'OBJECT':
+    if kind in ('OBJECT', 'INTERFACE'):
         if not isinstance(value, dict):
             raise AssertionError('expected %s object at %s, got %r' % (type_name, path, value))
-        fields = {f['name']: f for f in TYPES[type_name]['fields']}
+        fields_list = TYPES[type_name].get('fields')
+        if not fields_list:
+            # UNION/INTERFACE-without-fields edge case: nothing generic to
+            # validate against without the response's __typename. Assert
+            # cleanly rather than let the dict comprehension below TypeError
+            # on `for f in None`.
+            raise AssertionError('%s: type %s (kind=%s) has no field list to validate against'
+                                  % (path, type_name, kind))
+        fields = {f['name']: f for f in fields_list}
         for key, sub in value.items():
             if key not in fields:
                 raise AssertionError('unknown field %s.%s at %s' % (type_name, key, path))
             is_list, fkind, fname = _field_shape(fields[key])
             _check_field(sub, is_list, fkind, fname, path + '.' + key)
+    elif kind == 'ENUM':
+        members = {e['name'] for e in TYPES[type_name]['enumValues']}
+        if value not in members:
+            raise AssertionError('%s: %r is not a member of enum %s %s'
+                                  % (path, value, type_name, sorted(members)))
+    elif kind == 'UNION':
+        if not isinstance(value, dict):
+            raise AssertionError('expected union object at %s, got %r' % (path, value))
     else:
-        # SCALAR or ENUM leaf: never a dict or list.
+        # SCALAR leaf: never a dict or list, and must match its declared type.
         if isinstance(value, (dict, list)):
             raise AssertionError('expected scalar at %s, got %r' % (path, value))
+        if not _scalar_ok(type_name, value):
+            raise AssertionError('%s: expected %s, got %r' % (path, type_name, value))
 
 
 def _check_field(value, is_list, kind, type_name, path):
@@ -104,10 +143,25 @@ class TestSeedFixtures(unittest.TestCase):
                 self.assertIsInstance(doc['data'], dict, name)
                 self.assertTrue(doc['data'], name)
 
-    def test_seeds_match_the_live_schema(self):
-        for name in REQUIRED:
-            doc = context.fixture_json('seed/' + name)
-            assert_fixture_matches_schema(name, doc)
+    def test_all_fixtures_match_the_live_schema(self):
+        # The key guard was widened to the whole fixtures tree because a real
+        # capture lands outside seed/ (fixtures/<label>/); a bad shape there
+        # must fail the suite the same way a bad seed does, so this walks the
+        # whole tree too, not just seed/.
+        for root, _dirs, files in os.walk(context.FIXTURES):
+            for entry in files:
+                if not entry.endswith('.json'):
+                    continue
+                path = os.path.join(root, entry)
+                rel = os.path.relpath(path, context.FIXTURES)
+                with open(path, 'r', encoding='utf-8') as fh:
+                    try:
+                        doc = json.load(fh)
+                    except ValueError:
+                        continue  # not a GraphQL envelope, e.g. a malformed-response fixture
+                if not isinstance(doc, dict) or 'data' not in doc:
+                    continue
+                assert_fixture_matches_schema(rel, doc)
 
     def test_resolver_error_fixture_has_null_data_and_errors(self):
         doc = context.fixture_json('seed/error_resolver.json')
@@ -123,6 +177,18 @@ class TestSeedFixtures(unittest.TestCase):
         kb = arr['capacity']['kilobytes']
         self.assertEqual(('0', '0', '0'), (kb['free'], kb['used'], kb['total']))
         self.assertEqual([], arr['disks'])
+
+    def test_non_running_parity_check_nulls_its_subfields(self):
+        # tier0-coverage.md item 8: Golem, a POPULATED array with 300+ parity
+        # history entries, still returns null errors/correcting/paused/running
+        # whenever status isn't RUNNING. This is not an empty-array artifact —
+        # both fixtures must agree, or a collector coercing null to False/0
+        # only breaks against the one box nobody tested against.
+        for name in ('array_populated.json', 'array_empty.json'):
+            pc = context.fixture_json('seed/' + name)['data']['array']['parityCheckStatus']
+            if pc['status'] != 'RUNNING':
+                for field in ('errors', 'correcting', 'paused', 'running'):
+                    self.assertIsNone(pc[field], '%s.parityCheckStatus.%s' % (name, field))
 
     def test_empty_array_has_no_parities_and_thirty_free_slots(self):
         # Raven's real healthy-but-empty state: this is the trap the schema
@@ -172,8 +238,12 @@ class TestSeedFixtures(unittest.TestCase):
         for root, _dirs, files in os.walk(context.FIXTURES):
             for entry in files:
                 path = os.path.join(root, entry)
-                with open(path, 'r', encoding='utf-8') as fh:
-                    match = keyish.search(fh.read())
+                # Binary-safe decode: a non-utf8 file must not error the test
+                # out from under the files after it — it should just be
+                # scanned as best-effort text, same as the capture script does.
+                with open(path, 'rb') as fh:
+                    text = fh.read().decode('utf-8', 'replace')
+                match = keyish.search(text)
                 self.assertIsNone(match, os.path.relpath(path, context.FIXTURES))
 
 

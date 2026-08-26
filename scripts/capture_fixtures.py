@@ -8,7 +8,8 @@ The API key comes from the UNRAID_API_KEY environment variable, or from a
 prompt. It is deliberately NOT a command-line argument: arguments land in shell
 history and in the process table. Nothing this script writes contains the key.
 
-  set UNRAID_API_KEY=<paste>
+  PowerShell:  $env:UNRAID_API_KEY="<paste>"
+  Git Bash:    export UNRAID_API_KEY=<paste>
   python scripts/capture_fixtures.py --host 192.168.2.19 --port 29220 --label raven
 """
 import argparse
@@ -34,7 +35,7 @@ QUERIES = {
               'parities { idx name device size status temp numErrors } '
               'disks { idx name device size status temp numErrors fsType fsSize fsFree fsUsed } '
               'caches { name fsType fsSize fsFree fsUsed size } } }'),
-    'shares': '{ shares { name free used size floor } }',
+    'shares': '{ shares { name free used size floor include exclude } }',
     'notifications': '{ notifications { overview { unread { info warning alert total } } } }',
     'metrics': '{ metrics { cpu { percentTotal } memory { total used free percentTotal } } }',
     'parity': ('{ parityHistory { date duration speed status errors progress '
@@ -98,9 +99,11 @@ def main():
 
     # A label is joined straight into a filesystem path below. Reject anything
     # that could escape tests/python/fixtures/ or collide with the hand-written
-    # seed/ baseline this script must never overwrite.
-    if os.sep in args.label or (os.altsep and os.altsep in args.label) or '/' in args.label \
-            or args.label in ('.', '..', 'seed'):
+    # seed/ baseline this script must never overwrite. os.path.basename(label)
+    # != label also catches a drive-relative label like "D:evil", which has
+    # no path separator but os.path.join still resolves outside the tree.
+    if (os.path.isabs(args.label) or os.path.basename(args.label) != args.label
+            or ':' in args.label or args.label in ('.', '..', 'seed')):
         print("--label must be a plain directory name, not a path, and not 'seed'", file=sys.stderr)
         return 2
 

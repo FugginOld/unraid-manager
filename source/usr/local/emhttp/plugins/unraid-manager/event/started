@@ -1,0 +1,4 @@
+#!/bin/bash
+# emhttp fires this once the array is up. db_path points at a pool, so this is
+# the earliest moment the daemon can legitimately start.
+/usr/local/emhttp/plugins/unraid-manager/scripts/rc.unraid-manager start

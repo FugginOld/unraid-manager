@@ -1,0 +1,137 @@
+#!/bin/bash
+# managerd lifecycle. Called by the plg installer, by the emhttp event hooks,
+# by the retention cron, and by hand.
+#
+#   rc.unraid-manager start|stop|restart|status|prune|prune-vacuum
+
+PLUGIN_DIR="/usr/local/emhttp/plugins/unraid-manager"
+DAEMON="$PLUGIN_DIR/daemon/managerd.py"
+CFG="/boot/config/plugins/unraid-manager/manager.cfg"
+RUN_DIR="/var/run/unraid-manager"
+PIDFILE="$RUN_DIR/managerd.pid"
+LOG_DIR="/var/log/unraid-manager"
+
+read_cfg() {   # $1 = key
+    [ -f "$CFG" ] || return 0
+    sed -n "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*//p" "$CFG" \
+        | tail -n 1 | tr -d '"' | tr -d "'" | xargs
+}
+
+# The one thing that must be checked before anything is launched. Flash is a USB
+# stick with finite write endurance and telemetry is written continuously, so a
+# db_path on /boot is refused rather than accepted and regretted. The daemon
+# checks this too; doing it here means the operator sees the reason in the shell
+# that ran the command instead of only in a log.
+check_db_path() {
+    local path
+    path="$(read_cfg db_path)"
+    if [ -z "$path" ]; then
+        echo "unraid-manager: db_path is not set. Open Settings > Unraid-Manager and"
+        echo "  point it at a directory on a pool, e.g. /mnt/user/appdata/unraid-manager"
+        return 1
+    fi
+    case "$path" in
+        /boot|/boot/*)
+            echo "unraid-manager: db_path '$path' is on the USB flash device."
+            echo "  Telemetry is written continuously and flash wears out. Use a pool path."
+            return 1
+            ;;
+    esac
+    if [ ! -d "$path" ] && [ ! -d "$(dirname "$path")" ]; then
+        echo "unraid-manager: db_path '$path' does not exist and neither does its parent."
+        echo "  Is the pool mounted?"
+        return 1
+    fi
+    return 0
+}
+
+running() {
+    [ -f "$PIDFILE" ] || return 1
+    local pid
+    pid="$(cat "$PIDFILE" 2>/dev/null)"
+    [ -n "$pid" ] && [ -d "/proc/$pid" ]
+}
+
+case "$1" in
+start)
+    if running; then
+        echo "unraid-manager: already running (pid $(cat "$PIDFILE"))"
+        exit 0
+    fi
+    check_db_path || exit 1
+    mkdir -p "$RUN_DIR" "$LOG_DIR"
+    # Stale pidfile from an unclean shutdown; the running() check above already
+    # proved nothing is behind it.
+    rm -f "$PIDFILE"
+    nohup python3 "$DAEMON" >/dev/null 2>>"$LOG_DIR/managerd.err" &
+    sleep 1
+    if running; then
+        echo "unraid-manager: started (pid $(cat "$PIDFILE"))"
+        exit 0
+    fi
+    echo "unraid-manager: failed to start - see $LOG_DIR/managerd.log"
+    exit 1
+    ;;
+stop)
+    if ! running; then
+        echo "unraid-manager: not running"
+        rm -f "$PIDFILE"
+        exit 0
+    fi
+    pid="$(cat "$PIDFILE")"
+    # SIGTERM only. The daemon drains its worker pool and closes SQLite on the
+    # way out; SIGKILL mid-write on a WAL database is how you get a recovery on
+    # the next open for no reason at all.
+    kill -TERM "$pid" 2>/dev/null
+    for _ in $(seq 1 20); do
+        running || break
+        sleep 0.5
+    done
+    if running; then
+        echo "unraid-manager: pid $pid did not exit after 10s"
+        exit 1
+    fi
+    rm -f "$PIDFILE"
+    echo "unraid-manager: stopped"
+    exit 0
+    ;;
+restart)
+    "$0" stop
+    "$0" start
+    ;;
+status)
+    if running; then
+        echo "unraid-manager: running (pid $(cat "$PIDFILE"))"
+        exit 0
+    fi
+    echo "unraid-manager: stopped"
+    exit 3
+    ;;
+prune|prune-vacuum)
+    # Retention: daily prune from cron, plus a weekly VACUUM (spec section 4).
+    # Through the daemon when it is up so there is exactly one writer; skipped
+    # entirely when it is down, because retention is not urgent and a second
+    # process writing this database is not worth the risk.
+    #
+    # Spoken with python3 rather than netcat: python3 is already a hard
+    # dependency of this plugin (the daemon is written in it), whereas which
+    # netcat variant the Unraid image ships, and whether that build speaks unix
+    # sockets at all, are not things a cron job should be betting on.
+    # (rc_test.php asserts the netcat form stays absent, so do not name it here.)
+    if running; then
+        [ "$1" = "prune-vacuum" ] && vac=True || vac=False
+        python3 -c "import socket,json,sys
+s=socket.socket(socket.AF_UNIX, socket.SOCK_STREAM); s.settimeout(300)
+s.connect('/var/run/unraid-manager/managerd.sock')
+s.sendall(json.dumps({'cmd':'prune','vacuum':$vac}).encode()+b'\n')
+sys.stdout.write(s.recv(65536).decode('utf-8','replace'))"
+        exit 0
+    fi
+    echo "unraid-manager: daemon not running, $1 skipped"
+    exit 0
+    ;;
+*)
+    echo "usage: $0 {start|stop|restart|status|prune|prune-vacuum}"
+    exit 2
+    ;;
+esac

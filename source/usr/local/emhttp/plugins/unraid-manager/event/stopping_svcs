@@ -1,0 +1,4 @@
+#!/bin/bash
+# Fired before the array stops. The database lives on a pool that is about to be
+# unmounted, so the daemon must be down first or the unmount finds an open file.
+/usr/local/emhttp/plugins/unraid-manager/scripts/rc.unraid-manager stop

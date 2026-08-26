@@ -10,14 +10,27 @@ written against.
 Not committed until captured; when they land they sit beside the seeds, and the
 parser tests run against both.
 
-**No fixture may contain an API key.** `tests/python/test_fixtures.py` fails the
-suite on any 40+ character token-shaped string in this directory. Serial numbers
-in captures are masked length-preservingly by the capture script.
+**No fixture may contain an API key.** `tests/python/test_fixtures.py` recursively
+walks this whole directory — not just `seed/` — and fails the suite on any
+28+ character run of letters/digits/underscore. Real API keys are 64 lowercase-hex
+characters, so they're always caught; this project's UUID node ids never are,
+since a hyphen breaks a UUID into segments no longer than 12 characters. Serial
+numbers in captures are masked length-preservingly by the capture script.
 
 To capture (operator, on the dev machine, key supplied at run time):
 
+PowerShell:
+
 ```
-set UNRAID_API_KEY=<paste>            # PowerShell: $env:UNRAID_API_KEY="<paste>"
+$env:UNRAID_API_KEY="<paste>"
+python scripts/capture_fixtures.py --host 192.168.2.19  --port 29220 --label raven
+python scripts/capture_fixtures.py --host 192.168.2.248 --port 15137 --label golem
+```
+
+Git Bash:
+
+```
+export UNRAID_API_KEY=<paste>
 python scripts/capture_fixtures.py --host 192.168.2.19  --port 29220 --label raven
 python scripts/capture_fixtures.py --host 192.168.2.248 --port 15137 --label golem
 ```

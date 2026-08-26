@@ -30,9 +30,10 @@ OUT_ROOT = os.path.join(HERE, '..', 'tests', 'python', 'fixtures')
 QUERIES = {
     'info': '{ info { os { hostname release kernel uptime } versions { core { unraid api kernel } } } }',
     'array': ('{ array { state capacity { kilobytes { free used total } disks { free used total } } '
-              'parityCheckStatus parities { idx name device size status temp numErrors } '
+              'parityCheckStatus { status progress errors correcting paused running } '
+              'parities { idx name device size status temp numErrors } '
               'disks { idx name device size status temp numErrors fsType fsSize fsFree fsUsed } '
-              'caches { name fsType fsSize fsFree fsUsed } } }'),
+              'caches { name fsType fsSize fsFree fsUsed size } } }'),
     'shares': '{ shares { name free used size floor } }',
     'notifications': '{ notifications { overview { unread { info warning alert total } } } }',
     'metrics': '{ metrics { cpu { percentTotal } memory { total used free percentTotal } } }',
@@ -64,6 +65,13 @@ def scrub_serials(node):
     return node
 
 
+def scrub_serials_text(text):
+    """Best-effort scrub for a body that didn't parse as JSON (HTML error page,
+    truncated response) — a serial can still appear in a partial payload."""
+    pattern = r'"(%s)"\s*:\s*"([^"]*)"' % '|'.join(SERIAL_KEYS)
+    return re.sub(pattern, lambda m: '"%s":"%s"' % (m.group(1), mask(m.group(2))), text)
+
+
 def fetch(host, port, key, query, timeout):
     url = 'https://%s:%d/graphql' % (host, port)
     body = json.dumps({'query': query}).encode('utf-8')
@@ -87,6 +95,14 @@ def main():
     ap.add_argument('--port', type=int, required=True)
     ap.add_argument('--label', required=True, help='fixture subdirectory, e.g. raven')
     args = ap.parse_args()
+
+    # A label is joined straight into a filesystem path below. Reject anything
+    # that could escape tests/python/fixtures/ or collide with the hand-written
+    # seed/ baseline this script must never overwrite.
+    if os.sep in args.label or (os.altsep and os.altsep in args.label) or '/' in args.label \
+            or args.label in ('.', '..', 'seed'):
+        print("--label must be a plain directory name, not a path, and not 'seed'", file=sys.stderr)
+        return 2
 
     key = os.environ.get('UNRAID_API_KEY') or getpass.getpass('API key for %s: ' % args.host)
     if not key.strip():
@@ -113,21 +129,29 @@ def main():
             doc = json.loads(raw.decode('utf-8'))
             text = json.dumps(scrub_serials(doc), indent=None)
         except (ValueError, UnicodeDecodeError):
-            text = raw.decode('utf-8', 'replace')
+            text = scrub_serials_text(raw.decode('utf-8', 'replace'))
             path = os.path.join(out, domain + '.error')
 
-        assert key not in text, 'refusing to write a fixture containing the key'
+        # A plain assert is a credential backstop; python -O strips asserts, so
+        # this check must not be one.
+        if key in text:
+            raise SystemExit('refusing to write a fixture containing the key (%s)' % domain)
         with open(path, 'w', encoding='utf-8') as fh:
             fh.write(text + '\n')
 
         note = 'ok' if status == 200 and '"errors"' not in text else 'HTTP %s / errors' % status
-        print('%-14s %-6s %s  -> %s' % (domain, status, note, os.path.relpath(path)))
+        try:
+            shown = os.path.relpath(path)
+        except ValueError:
+            # relpath raises when path and cwd are on different drives (Windows).
+            shown = path
+        print('%-14s %-6s %s  -> %s' % (domain, status, note, shown))
         if note != 'ok':
             failures += 1
 
     print('\ncaptured into %s (%d domain(s) not clean)' % (out, failures))
     print('Review every file for anything identifying before committing.')
-    return 0
+    return 1 if failures else 0
 
 
 if __name__ == '__main__':

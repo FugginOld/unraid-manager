@@ -49,6 +49,37 @@ Also available at Tier 0, unplanned: GraphQL **subscriptions** over WS (`arraySu
 - `Query.disks` **works** here: 15.4s for 37 disks. The hard 504 is Raven-specific (investigate that box's stuck device eventually), but 15s+ confirms the slow-lane design — never in the 30s hot path.
 - Multi-device pool pattern confirmed at scale: `cache_movies/2/3`, `cache_tv/2/3/4`, `medianucbackup/2` — non-primary members carry null `fsType/fsSize/fsFree`. ZFS pool (`medianucbackup`) reports fs sizes like the others; still no profile/redundancy field on any of them.
 
+## Wire-shape facts (verified live 2026-08-26, both boxes — these correct the P0 plan)
+
+Settled by querying Raven and Golem directly during Task 4 review, after the plan's
+seed fixtures were found to encode shapes the API cannot return.
+
+1. **`array.parityCheckStatus` is an OBJECT (`ParityCheck!`), not a string.** The leaf-field
+   form the plan used is rejected outright: `Field "parityCheckStatus" of type "ParityCheck!"
+   must have a selection of subfields.` Correct selection: `parityCheckStatus { status
+   progress errors correcting paused running }`.
+2. **On an empty array the boolean/count subfields come back `null`, not `false`/`0`.**
+   Raven, verbatim: `{"status":"NEVER_RUN","progress":0,"errors":null,"correcting":null,
+   "paused":null,"running":null}`. This is a blank-is-not-zero case: a parser coercing
+   these to `false` invents a fact the box did not state.
+3. **`BigInt` fields serialize as JSON NUMBERS, not strings.** Golem, verbatim:
+   `{"name":"disk1","size":13672382412,"numErrors":0,"fsSize":13998382592,"fsFree":457119343}`
+   and `{"name":"appdata","free":830838768,"used":168876601,"size":0}`. Every `BigInt`
+   (`ArrayDisk.size/numErrors/fsSize/fsFree`, `Share.free/used/size`) is a number.
+4. **But `Capacity` fields ARE strings** — `capacity.kilobytes` returns
+   `{"free":"17337941911","used":"250627444451","total":"267965386366"}`. `Capacity.free/used/total`
+   are declared `String` in the schema, unlike `BigInt`. Both encodings are correct, for
+   different types; a collector must not assume one rule.
+5. **Non-primary pool members carry `size`, but null `fsType`/`fsSize`/`fsFree`.** Golem's
+   4-member pool, verbatim: `cache_tv` (btrfs, fsSize 4000815350), then `cache_tv2/3/4` each
+   `{"fsType":null,"fsSize":null,"fsFree":null,"size":976761560}`. Pools run to at least
+   4 members — dedupe logic that strips a trailing `2` or pairs adjacent entries silently
+   drops members and under-reports capacity.
+6. **`ParityCheck.status` observed values: `COMPLETED`, `CANCELLED`, `FAILED`** across
+   Golem's 300+ entry history. `OK` is not a member of the enum and never appears.
+7. **API keys are 64 lowercase hex characters** on both boxes — relevant to any
+   credential-shaped scanning threshold.
+
 ## Still open
 
 - `smart/` directory contents/format (inspect when building Tier 1 M4).

@@ -24,6 +24,18 @@ and never as an error. An array with no disks in it reads as an empty array,
 because that is what it is.
 </CHANGES>
 
+<!-- Stops any running daemon BEFORE the package FILE below replaces its files.
+     Must be its own FILE positioned ahead of the package FILE: the upgradepkg
+     run on that entry already overwrites usr/local/emhttp/plugins/unraid-manager
+     by the time an INLINE block placed after it would run, so a stop line
+     inside that later block is too late to protect a live process. Guarded so
+     a fresh install (nothing running yet) is a clean no-op. -->
+<FILE Run="/bin/bash">
+<INLINE>
+[ -x /usr/local/emhttp/plugins/unraid-manager/scripts/rc.unraid-manager ] &amp;&amp; /usr/local/emhttp/plugins/unraid-manager/scripts/rc.unraid-manager stop
+</INLINE>
+</FILE>
+
 <FILE Name="/boot/config/plugins/unraid-manager/unraid-manager.txz" Run="upgradepkg --install-new">
 <URL>&pkgURL;</URL>
 <MD5>&md5;</MD5>
@@ -31,7 +43,6 @@ because that is what it is.
 
 <FILE Run="/bin/bash">
 <INLINE>
-[ -x /usr/local/emhttp/plugins/unraid-manager/scripts/rc.unraid-manager ] &amp;&amp; /usr/local/emhttp/plugins/unraid-manager/scripts/rc.unraid-manager stop
 rm -rf /usr/local/emhttp/plugins/unraid-manager
 tar -xJf /boot/config/plugins/unraid-manager/unraid-manager.txz -C /
 chmod +x /usr/local/emhttp/plugins/unraid-manager/scripts/rc.unraid-manager

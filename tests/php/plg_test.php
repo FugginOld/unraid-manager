@@ -50,22 +50,41 @@ foreach ($inl[1] as $block) {
 check('no bare ampersand in any INLINE block', $bad === 0);
 check('at least one INLINE block present', count($inl[1]) > 0);
 
-/* 3b. Pull each Run="/bin/bash" block's own text, keyed by its Method
-      attribute (install has none, uninstall has Method="remove"), so checks
-      below can assert against the block that actually matters instead of the
-      whole file — a string that merely appears *somewhere* in $raw (a <FILE
-      Name=...> attribute, the other script, a comment) must not satisfy a
-      check named for one specific block. */
-function inlineTextFor(DOMDocument $doc, string $method): string {
-    foreach ($doc->getElementsByTagName('FILE') as $file) {
-        if ($file->getAttribute('Method') !== $method) continue;
+/* 3b. Classify every top-level <FILE> in document order, so checks below can
+      assert against the specific block that matters (and, for the daemon-stop
+      block, its position relative to the package FILE) instead of the whole
+      file — a string that merely appears *somewhere* in $raw (a <FILE
+      Name=...> attribute, a different script, a comment) must not satisfy a
+      check named for one specific block.
+        - the package FILE is identified by its Name ending in the .txz;
+        - the remove block is Method="remove" with an INLINE child;
+        - of the two remaining Method="" FILEs with an INLINE child, the main
+          install block is the one containing "tar -xJf" (the package
+          extraction line) and the other is the standalone pre-package
+          daemon-stop block — classified by content, not by document
+          position, so a reorder mutation of the stop block is still found
+          under the right name and only fails the order check itself. */
+$pkgIdx = $installIdx = $removeIdx = $stopIdx = null;
+$installInline = $removeInline = $stopInline = '';
+if ($ok !== false) {
+    $files = $doc->getElementsByTagName('FILE');
+    foreach ($files as $i => $file) {
+        if (str_ends_with($file->getAttribute('Name'), 'unraid-manager.txz')) {
+            $pkgIdx = $i;
+            continue;
+        }
         $inlines = $file->getElementsByTagName('INLINE');
-        if ($inlines->length > 0) return $inlines->item(0)->textContent;
+        if ($inlines->length === 0) continue;
+        $text = $inlines->item(0)->textContent;
+        if ($file->getAttribute('Method') === 'remove') {
+            $removeIdx = $i; $removeInline = $text;
+        } elseif (str_contains($text, 'tar -xJf')) {
+            $installIdx = $i; $installInline = $text;
+        } else {
+            $stopIdx = $i; $stopInline = $text;
+        }
     }
-    return '';
 }
-$installInline = $ok !== false ? inlineTextFor($doc, '') : '';
-$removeInline  = $ok !== false ? inlineTextFor($doc, 'remove') : '';
 
 /* 4. Install/uninstall contract from spec §1. Scoped to $installInline, not
       $raw: substring checks against the whole file pass even when the line
@@ -94,36 +113,46 @@ check('the weekly vacuum is scheduled', str_contains($raw, 'rc.unraid-manager pr
    line that actually starts the daemon. */
 check('install starts the daemon via the rc script', str_contains($installInline, 'rc.unraid-manager start'));
 
-/* An upgrade with the array up must not rm -rf a running daemon's directory
-   out from under it. This has to be the first line of the install block —
-   any earlier line already touched the directory. */
-$installLines = array_values(array_filter(
-    preg_split('/\r\n|\r|\n/', $installInline),
-    fn($l) => trim($l) !== ''
-));
-check('install stops any running daemon before touching its directory (first line)',
-      trim($installLines[0] ?? '') ===
+/* An upgrade with the array up must not let the package FILE overwrite a
+   running daemon's files out from under it. upgradepkg on the package FILE
+   entry already replaces usr/local/emhttp/plugins/unraid-manager by the time
+   any INLINE block placed after it would run — so the stop command has to
+   live in its own FILE positioned strictly before the package FILE in
+   document order, not merely be present somewhere in the install script. */
+check('a daemon-stop FILE exists, guarded so a fresh install is a no-op',
+      trim($stopInline) ===
       '[ -x /usr/local/emhttp/plugins/unraid-manager/scripts/rc.unraid-manager ] && '
       . '/usr/local/emhttp/plugins/unraid-manager/scripts/rc.unraid-manager stop');
+check('the daemon-stop FILE is positioned before the package FILE',
+      $stopIdx !== null && $pkgIdx !== null && $stopIdx < $pkgIdx);
 
 check('remove block present', str_contains($raw, 'Method="remove"'));
 check('remove drops the cron', str_contains($raw, 'rm -f /etc/cron.d/unraid-manager'));
 /* Flash config and the pool DB survive an uninstall unless the operator says
    otherwise (spec §1). A blocklist of delete-command spellings (rm -rf vs.
    rm -fr vs. rm -r -f vs. find -delete, etc.) always misses one — so instead:
-   walk every non-comment, non-blank line of the remove block's own text, and
-   fail if ANY line other than the final informational echo mentions the
-   flash-config path at all. A line that never names the path can't delete it
-   under any spelling; a line that does name it and isn't the echo is a leak
-   by construction. */
+   collect every non-comment, non-blank line of the remove block's own text,
+   and fail if the flash-config path appears anywhere except the LAST such
+   line — and require that last line to be a lone echo of a literal string
+   with no command chaining. A naive "starts with echo " exemption is itself
+   a bypass: "echo cleaning; <delete-command> /boot/config/..." starts with
+   "echo " and would slip through untouched. Anchoring the exemption to a
+   single command occupying the WHOLE final line closes that: nothing can
+   ride along after it. */
+$removeLines = array_values(array_filter(
+    preg_split('/\r\n|\r|\n/', $removeInline),
+    function ($l) {
+        $t = ltrim($l);
+        return $t !== '' && $t[0] !== '#';
+    }
+));
 $leaks = 0;
-foreach (preg_split('/\r\n|\r|\n/', $removeInline) as $line) {
-    $trimmed = ltrim($line);
-    if ($trimmed === '' || $trimmed[0] === '#') continue;
-    if (str_starts_with($trimmed, 'echo ')) continue;
-    if (str_contains($line, '/boot/config/plugins/unraid-manager')) $leaks++;
+$lastIdx = count($removeLines) - 1;
+foreach ($removeLines as $i => $line) {
+    if (!str_contains($line, '/boot/config/plugins/unraid-manager')) continue;
+    if ($i !== $lastIdx || !preg_match('/^echo "[^"`|;&$]*"$/', trim($line))) $leaks++;
 }
-check('remove touches the flash-config path only in the final echo', $leaks === 0);
+check('remove touches the flash-config path only in a lone final echo', $leaks === 0);
 
 /* 5. No secret ever ships in the package definition. */
 check('no api key in the plg', !preg_match('/[A-Za-z0-9_\-]{40,}/', $raw));

@@ -4,8 +4,8 @@
 <!ENTITY author    "FugginOld">
 <!ENTITY version   "2026.08.25">
 <!ENTITY launch    "Tasks/Fleet">
-<!ENTITY pluginURL "https://raw.githubusercontent.com/FugginOld/unraid-link/main/unraid-manager.plg">
-<!ENTITY pkgURL    "https://github.com/FugginOld/unraid-link/releases/download/2026.08.25/unraid-manager.txz">
+<!ENTITY pluginURL "https://raw.githubusercontent.com/FugginOld/unraid-manager/main/unraid-manager.plg">
+<!ENTITY pkgURL    "https://github.com/FugginOld/unraid-manager/releases/download/2026.08.25/unraid-manager.txz">
 <!ENTITY md5       "00000000000000000000000000000000">
 <!ENTITY icon      "icon.png">
 ]>

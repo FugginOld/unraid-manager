@@ -1,4 +1,4 @@
-# unraid-link
+# unraid-manager
 Link multiple Unraid arrays
 
 ## Development prerequisites

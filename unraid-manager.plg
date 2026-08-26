@@ -43,6 +43,15 @@ because that is what it is.
 
 <FILE Run="/bin/bash">
 <INLINE>
+# This delete and this extraction are a pair; neither can be removed alone.
+# rm -rf clears the directory the package FILE above just populated via
+# upgradepkg, and tar -xJf then re-lays it from the same .txz. That looks
+# redundant, but it is not proven so: build.sh's non-Slackware fallback path
+# ships a plain tar, not a real Slackware package, and it is unverified
+# off-box whether upgradepkg --install-new re-installs (vs. silently no-ops)
+# a package whose name/version upgradepkg thinks are unchanged. Drop the rm
+# and a stale file from an old release could survive; drop the tar and an
+# upgrade could rely entirely on upgradepkg's unverified behavior.
 rm -rf /usr/local/emhttp/plugins/unraid-manager
 tar -xJf /boot/config/plugins/unraid-manager/unraid-manager.txz -C /
 chmod +x /usr/local/emhttp/plugins/unraid-manager/scripts/rc.unraid-manager

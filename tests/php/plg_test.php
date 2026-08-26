@@ -58,13 +58,17 @@ check('at least one INLINE block present', count($inl[1]) > 0);
       check named for one specific block.
         - the package FILE is identified by its Name ending in the .txz;
         - the remove block is Method="remove" with an INLINE child;
-        - of the two remaining Method="" FILEs with an INLINE child, the main
-          install block is the one containing "tar -xJf" (the package
-          extraction line) and the other is the standalone pre-package
-          daemon-stop block — classified by content, not by document
-          position, so a reorder mutation of the stop block is still found
-          under the right name and only fails the order check itself. */
-$pkgIdx = $installIdx = $removeIdx = $stopIdx = null;
+        - the daemon-stop block is identified by matching its text against
+          $expectedStop EXACTLY — not by content sniffing (e.g. "does this
+          contain tar -xJf") — so deleting or editing an unrelated line in the
+          real install block can never change which block gets called the
+          stop block, and it can never falsely claim a benign extra INLINE
+          added later;
+        - whichever remaining Method="" FILE has an INLINE child that is NOT
+          the stop block is the main install block, whatever it contains. */
+$expectedStop = '[ -x /usr/local/emhttp/plugins/unraid-manager/scripts/rc.unraid-manager ] && '
+              . '/usr/local/emhttp/plugins/unraid-manager/scripts/rc.unraid-manager stop';
+$pkgIdx = $stopIdx = null;
 $installInline = $removeInline = $stopInline = '';
 if ($ok !== false) {
     $files = $doc->getElementsByTagName('FILE');
@@ -77,11 +81,11 @@ if ($ok !== false) {
         if ($inlines->length === 0) continue;
         $text = $inlines->item(0)->textContent;
         if ($file->getAttribute('Method') === 'remove') {
-            $removeIdx = $i; $removeInline = $text;
-        } elseif (str_contains($text, 'tar -xJf')) {
-            $installIdx = $i; $installInline = $text;
-        } else {
+            $removeInline = $text;
+        } elseif (trim($text) === $expectedStop) {
             $stopIdx = $i; $stopInline = $text;
+        } else {
+            $installInline = $text;
         }
     }
 }
@@ -120,25 +124,36 @@ check('install starts the daemon via the rc script', str_contains($installInline
    live in its own FILE positioned strictly before the package FILE in
    document order, not merely be present somewhere in the install script. */
 check('a daemon-stop FILE exists, guarded so a fresh install is a no-op',
-      trim($stopInline) ===
-      '[ -x /usr/local/emhttp/plugins/unraid-manager/scripts/rc.unraid-manager ] && '
-      . '/usr/local/emhttp/plugins/unraid-manager/scripts/rc.unraid-manager stop');
+      $stopIdx !== null && trim($stopInline) === $expectedStop);
 check('the daemon-stop FILE is positioned before the package FILE',
       $stopIdx !== null && $pkgIdx !== null && $stopIdx < $pkgIdx);
 
 check('remove block present', str_contains($raw, 'Method="remove"'));
 check('remove drops the cron', str_contains($raw, 'rm -f /etc/cron.d/unraid-manager'));
 /* Flash config and the pool DB survive an uninstall unless the operator says
-   otherwise (spec §1). A blocklist of delete-command spellings (rm -rf vs.
-   rm -fr vs. rm -r -f vs. find -delete, etc.) always misses one — so instead:
-   collect every non-comment, non-blank line of the remove block's own text,
-   and fail if the flash-config path appears anywhere except the LAST such
-   line — and require that last line to be a lone echo of a literal string
-   with no command chaining. A naive "starts with echo " exemption is itself
-   a bypass: "echo cleaning; <delete-command> /boot/config/..." starts with
-   "echo " and would slip through untouched. Anchoring the exemption to a
-   single command occupying the WHOLE final line closes that: nothing can
-   ride along after it. */
+   otherwise (spec §1).
+   HONEST LIMITS OF THIS GUARD, read before touching it again: this is a
+   static string/shape heuristic over a shell script, not a proof. It catches
+   every shape enumerated against it across three review rounds — direct
+   deletes of the flash path under any rm/find spelling, a chained command
+   riding an "echo " prefix, the parent-directory and wildcard-sibling forms,
+   and building the path via `cd` or a variable assignment. It does NOT prove
+   the remove block preserves flash data under every shape a shell script
+   could construct — a parser over free-form shell can always be beaten by a
+   shape nobody has enumerated yet. The real protections are a human reading
+   this file's remove block before every release, and live verification of
+   the remove path against a real Unraid box before it ships (Task 22).
+   Given that ceiling, the check below:
+     - blanket-bans any `cd` command or bare variable assignment anywhere in
+       the remove block — the block has no legitimate need for either, so a
+       flat refusal is correct and costs nothing;
+     - matches the PARENT directory /boot/config/plugins, not the full
+       .../unraid-manager path, so a wildcard sibling delete
+       (/boot/config/plugins/unraid-*) is caught too;
+     - still allows the parent path to appear on a lone final echo of a
+       literal string with no command chaining, so the block's own
+       informational message about where the flash config lives doesn't
+       trip the guard. */
 $removeLines = array_values(array_filter(
     preg_split('/\r\n|\r|\n/', $removeInline),
     function ($l) {
@@ -148,11 +163,17 @@ $removeLines = array_values(array_filter(
 ));
 $leaks = 0;
 $lastIdx = count($removeLines) - 1;
+$flashParent = '/boot/config/plugins';
 foreach ($removeLines as $i => $line) {
-    if (!str_contains($line, '/boot/config/plugins/unraid-manager')) continue;
-    if ($i !== $lastIdx || !preg_match('/^echo "[^"`|;&$]*"$/', trim($line))) $leaks++;
+    $trimmed = trim($line);
+    if (preg_match('/^cd(\s|$)/', $trimmed) || preg_match('/^[A-Za-z_][A-Za-z0-9_]*=\S/', $trimmed)) {
+        $leaks++;
+        continue;
+    }
+    if (!str_contains($line, $flashParent)) continue;
+    if ($i !== $lastIdx || !preg_match('/^echo "[^"`|;&$]*"$/', $trimmed)) $leaks++;
 }
-check('remove touches the flash-config path only in a lone final echo', $leaks === 0);
+check('remove has no cd/assignment and touches the plugins dir only in a lone final echo', $leaks === 0);
 
 /* 5. No secret ever ships in the package definition. */
 check('no api key in the plg', !preg_match('/[A-Za-z0-9_\-]{40,}/', $raw));

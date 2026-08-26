@@ -96,6 +96,30 @@ seed fixtures were found to encode shapes the API cannot return.
    "allocator":"highwater","splitLevel":"","floor":"1000000","cow":"auto","color":"yellow-on",
    "luksStatus":"0"}`
 
+11. **`parityHistory` rows null DIFFERENTLY from `array.parityCheckStatus`, despite being
+   the same GraphQL type (`ParityCheck`).** Verified across Golem's 355 rows and Raven's 3:
+
+   | field | `array.parityCheckStatus` (idle) | `parityHistory` row |
+   |---|---|---|
+   | `progress` | `0` | **`null`** |
+   | `errors` | `null` | **`0` — non-null, 357/358 rows** |
+   | `correcting` / `paused` / `running` | `null` | `null` (0/358 non-null) |
+
+   A single shared parser for the two contexts will be wrong in one of them. Golem row
+   verbatim: `{"date":"2026-07-23T22:23:56.000Z","duration":102398,"speed":"136726495",
+   "status":"COMPLETED","errors":0,"progress":null,"correcting":null,"paused":null,"running":null}`
+
+12. **`ParityCheck.speed` is a free-form string with at least four incompatible formats**
+   in one box's history — a landmine for any numeric parse. Observed on Golem, verbatim:
+   `"136726495"` (bare bytes/sec), `"88.3 MB/s"` (human-readable with unit),
+   `"0"`, and `"nanB/s"` (a NaN that reached the formatter). `float(speed)` raises on two
+   of those four. Treat speed as an opaque display string, or parse defensively with an
+   explicit unknown result — never assume it is numeric.
+
+13. **History carries implausible dates and zero durations.** Golem's oldest rows include
+   `2001-12-10` and a `FAILED` row dated `2021-01-01` with `"duration":0`. Clock skew and
+   garbage timestamps are normal in this data; sorting or date arithmetic must tolerate them.
+
 ## Still open
 
 - `smart/` directory contents/format (inspect when building Tier 1 M4).

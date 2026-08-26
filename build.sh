@@ -22,8 +22,9 @@ echo "==> Unraid-Manager build  (version: $VERSION)"
 
 # Refuse to package a key. Enrollment keys live on flash at 0600 and are
 # supplied by the operator at run time; one committed by accident would ship to
-# every install.
-if find source -name '*.key' -print -quit | grep -q .; then
+# every install. Covers loose *.key/*.pem files and anything under a keys/
+# directory (.gitignore's other reserved spot for secrets).
+if find source \( -name '*.key' -o -name '*.pem' -o -path '*/keys/*' \) -print -quit | grep -q .; then
     echo "ERROR: a .key file is inside source/. Refusing to package a secret."
     exit 1
 fi

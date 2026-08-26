@@ -25,6 +25,11 @@ check('prints md5 for the plg', str_contains($sh, 'md5sum'));
    a new supply-chain surface — assert it stays absent. */
 check('build fetches nothing from the network',
       !str_contains($sh, 'curl') && !str_contains($sh, 'wget'));
+check('build refuses to package a key', str_contains($sh, 'Refusing to package a secret'));
+/* The guard must catch both loose *.key files AND anything under a keys/
+   directory (.gitignore's other reserved spot for secrets) — a find that only
+   matches '*.key' misses a keys/ dir entirely. */
+check('key guard also covers keys/ directories', str_contains($sh, "-path '*/keys/*'"));
 
 $plugdir = $root . '/source/usr/local/emhttp/plugins/unraid-manager';
 check('plugin dir at the emhttp path', is_dir($plugdir));

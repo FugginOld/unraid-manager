@@ -1,0 +1,1 @@
+{"data":{"disks":[{"device":"/dev/sdc","name":"sdc","vendor":"Seagate","size":18000207600128,"temperature":36,"smartStatus":"OK","interfaceType":"SATA","serialNum":"ZR5XXXXX"}],"assignableDisks":[{"device":"/dev/sdz","name":"sdz","vendor":"WDC","size":8001563222016,"temperature":31,"smartStatus":"OK","interfaceType":"SATA","serialNum":"WD-XXXXXX"}]}}

@@ -1,0 +1,1 @@
+{"data":{"logFiles":[{"name":"syslog","path":"/var/log/syslog","size":4194304,"modifiedAt":"2026-08-25T11:02:00.000Z"},{"name":"docker.log","path":"/var/log/docker.log","size":81920,"modifiedAt":"2026-08-25T10:14:00.000Z"}]}}

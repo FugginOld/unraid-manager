@@ -1,0 +1,8 @@
+releases/
+__pycache__/
+*.pyc
+.venv/
+# API keys are supplied by the operator at run time and never live in this repo.
+*.key
+keys/
+tests/python/fixtures/**/*.key

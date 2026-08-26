@@ -3,7 +3,7 @@
 **Name:** Unraid-Manager
 **Repo:** `FugginOld/Unraid-Manager`
 **Plugin slug:** `unraid-manager`
-**Status:** planning — no code written
+**Status:** P0 in execution — see `docs/superpowers/plans/2026-08-25-p0-skeleton.md` for the task list and what P0 defers
 **Purpose of this doc:** input to a Superpowers brainstorming pass for the backend, and a frontend brief for ui-ux-pro-max.
 
 ---
@@ -277,6 +277,10 @@ Aggregate NUT state across nodes. Define shutdown order (dependents first — th
 ## 7. API surface
 
 Manager-local, under `/plugins/unraid-manager/api/`. All responses `application/json`, all mutations POST with CSRF.
+
+Paths below are the logical resource model, not literal URLs. P0 serves them as
+`api/<resource>.php?action=<verb>` because the webGUI has no router; a rewrite
+layer is P1 if a client ever needs the REST shape.
 
 ```
 GET  /nodes                        list + rollup state

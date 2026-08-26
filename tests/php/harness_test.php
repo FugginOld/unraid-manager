@@ -1,6 +1,7 @@
 <?PHP
-/* Proves the PHP suite runs at all: php version floor and the check() helper
-   every other gate test in this directory uses.
+/* Proves the PHP suite runs at all: php version floor and this file's local
+   check() helper. Every later gate test in this directory defines its own
+   identical copy of check() rather than sharing one.
      php tests/php/harness_test.php  ->  "harness: all pass" (exit 0) */
 
 $fails = 0;

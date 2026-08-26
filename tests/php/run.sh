@@ -3,6 +3,7 @@
 #   bash tests/php/run.sh
 set -u
 cd "$(dirname "$0")/../.." || exit 1
+command -v php >/dev/null || { echo "php not on PATH"; exit 2; }
 fails=0
 for t in tests/php/*_test.php; do
     [ -e "$t" ] || continue

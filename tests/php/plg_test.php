@@ -50,22 +50,80 @@ foreach ($inl[1] as $block) {
 check('no bare ampersand in any INLINE block', $bad === 0);
 check('at least one INLINE block present', count($inl[1]) > 0);
 
-/* 4. Install/uninstall contract from spec §1. */
-check('install seeds the flash config dir', str_contains($raw, '/boot/config/plugins/unraid-manager'));
-check('install registers the retention cron', str_contains($raw, 'update_cron'));
+/* 3b. Pull each Run="/bin/bash" block's own text, keyed by its Method
+      attribute (install has none, uninstall has Method="remove"), so checks
+      below can assert against the block that actually matters instead of the
+      whole file — a string that merely appears *somewhere* in $raw (a <FILE
+      Name=...> attribute, the other script, a comment) must not satisfy a
+      check named for one specific block. */
+function inlineTextFor(DOMDocument $doc, string $method): string {
+    foreach ($doc->getElementsByTagName('FILE') as $file) {
+        if ($file->getAttribute('Method') !== $method) continue;
+        $inlines = $file->getElementsByTagName('INLINE');
+        if ($inlines->length > 0) return $inlines->item(0)->textContent;
+    }
+    return '';
+}
+$installInline = $ok !== false ? inlineTextFor($doc, '') : '';
+$removeInline  = $ok !== false ? inlineTextFor($doc, 'remove') : '';
+
+/* 4. Install/uninstall contract from spec §1. Scoped to $installInline, not
+      $raw: substring checks against the whole file pass even when the line
+      that matters was deleted, as long as the same words appear anywhere
+      else (cron lines also say "rc.unraid-manager", the remove block also
+      calls update_cron, a <FILE Name=...> attribute also has the flash path). */
+check('install seeds the flash config dir',
+      str_contains($installInline, 'mkdir -p /boot/config/plugins/unraid-manager/keys'));
+/* The exact invocation, not the bare word: the install block's own comment
+   above the cron printf also says "update_cron" in prose, and a substring
+   check against $installInline alone survives deleting the real call as long
+   as that comment is still there. */
+check('install registers the retention cron',
+      str_contains($installInline, '/usr/local/sbin/update_cron'));
+check('install unpacks the package',
+      str_contains($installInline, 'tar -xJf /boot/config/plugins/unraid-manager/unraid-manager.txz'));
 /* Spec section 4 asks for a daily prune AND a weekly VACUUM. Both must be
-   scheduled, or the second one never happens. */
+   scheduled, or the second one never happens. These two are fine matched
+   against $raw: the strings they look for ("prune >", "prune-vacuum >") only
+   ever occur in the cron lines, nowhere else in the file. */
 check('the daily prune is scheduled', str_contains($raw, 'rc.unraid-manager prune >'));
 check('the weekly vacuum is scheduled', str_contains($raw, 'rc.unraid-manager prune-vacuum >'));
-check('install starts the daemon via the rc script', str_contains($raw, 'rc.unraid-manager'));
+/* Specifically the *start* invocation, not just any mention of the rc
+   script's name — the cron lines inside this same block also say
+   "rc.unraid-manager", so a bare substring match would survive deleting the
+   line that actually starts the daemon. */
+check('install starts the daemon via the rc script', str_contains($installInline, 'rc.unraid-manager start'));
+
+/* An upgrade with the array up must not rm -rf a running daemon's directory
+   out from under it. This has to be the first line of the install block —
+   any earlier line already touched the directory. */
+$installLines = array_values(array_filter(
+    preg_split('/\r\n|\r|\n/', $installInline),
+    fn($l) => trim($l) !== ''
+));
+check('install stops any running daemon before touching its directory (first line)',
+      trim($installLines[0] ?? '') ===
+      '[ -x /usr/local/emhttp/plugins/unraid-manager/scripts/rc.unraid-manager ] && '
+      . '/usr/local/emhttp/plugins/unraid-manager/scripts/rc.unraid-manager stop');
+
 check('remove block present', str_contains($raw, 'Method="remove"'));
 check('remove drops the cron', str_contains($raw, 'rm -f /etc/cron.d/unraid-manager'));
 /* Flash config and the pool DB survive an uninstall unless the operator says
-   otherwise (spec §1) — the remove block must not delete either. Anchored to
-   the start of a line so the documentation comment that TELLS the operator how
-   to remove it by hand does not read as the command itself. */
-check('remove does not delete the flash config',
-      !preg_match('/^\s*rm\s+-rf?\s+\/boot\/config\/plugins\/unraid-manager\b/m', $raw));
+   otherwise (spec §1). A blocklist of delete-command spellings (rm -rf vs.
+   rm -fr vs. rm -r -f vs. find -delete, etc.) always misses one — so instead:
+   walk every non-comment, non-blank line of the remove block's own text, and
+   fail if ANY line other than the final informational echo mentions the
+   flash-config path at all. A line that never names the path can't delete it
+   under any spelling; a line that does name it and isn't the echo is a leak
+   by construction. */
+$leaks = 0;
+foreach (preg_split('/\r\n|\r|\n/', $removeInline) as $line) {
+    $trimmed = ltrim($line);
+    if ($trimmed === '' || $trimmed[0] === '#') continue;
+    if (str_starts_with($trimmed, 'echo ')) continue;
+    if (str_contains($line, '/boot/config/plugins/unraid-manager')) $leaks++;
+}
+check('remove touches the flash-config path only in the final echo', $leaks === 0);
 
 /* 5. No secret ever ships in the package definition. */
 check('no api key in the plg', !preg_match('/[A-Za-z0-9_\-]{40,}/', $raw));

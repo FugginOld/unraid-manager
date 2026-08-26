@@ -10,7 +10,7 @@
 <!ENTITY icon      "icon.png">
 ]>
 
-<PLUGIN name="&name;" author="&author;" version="&version;" launch="&launch;" pluginURL="&pluginURL;" icon="&icon;">
+<PLUGIN name="&name;" author="&author;" version="&version;" launch="&launch;" pluginURL="&pluginURL;" icon="&icon;" min="7.0.0">
 
 <CHANGES>
 ###2026.08.25###
@@ -31,6 +31,7 @@ because that is what it is.
 
 <FILE Run="/bin/bash">
 <INLINE>
+[ -x /usr/local/emhttp/plugins/unraid-manager/scripts/rc.unraid-manager ] &amp;&amp; /usr/local/emhttp/plugins/unraid-manager/scripts/rc.unraid-manager stop
 rm -rf /usr/local/emhttp/plugins/unraid-manager
 tar -xJf /boot/config/plugins/unraid-manager/unraid-manager.txz -C /
 chmod +x /usr/local/emhttp/plugins/unraid-manager/scripts/rc.unraid-manager
@@ -42,11 +43,15 @@ chmod +x /usr/local/emhttp/plugins/unraid-manager/event/stopping_svcs
 # lives. Written with printf, not a heredoc, because this INLINE block is XML
 # character data.
 mkdir -p /boot/config/plugins/unraid-manager/keys
-chmod 700 /boot/config/plugins/unraid-manager/keys
+# /boot is vfat: file modes come from the mount's fmask/dmask, so this chmod is
+# either a no-op or "Operation not permitted" depending on the mount options,
+# and this block re-runs every boot. Keep it for the hosts where it works;
+# suppress the error everywhere else instead of printing on every boot.
+chmod 700 /boot/config/plugins/unraid-manager/keys 2>/dev/null || true
 if [ ! -f /boot/config/plugins/unraid-manager/manager.cfg ]; then
   printf 'db_path=\npoll_fast=30\npoll_slow=600\n' > /boot/config/plugins/unraid-manager/manager.cfg
 fi
-touch /boot/config/plugins/unraid-manager/nodes.cfg
+[ -f /boot/config/plugins/unraid-manager/nodes.cfg ] || : > /boot/config/plugins/unraid-manager/nodes.cfg
 
 # Retention prune, daily. /etc/cron.d is tmpfs and this block re-runs at boot,
 # which is how every Unraid plugin schedules work; update_cron folds it into

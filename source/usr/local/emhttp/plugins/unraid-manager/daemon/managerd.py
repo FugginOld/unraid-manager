@@ -5,10 +5,35 @@ it, so nothing here opens a socket or a database at import time. The entrypoint
 lives under `if __name__ == '__main__'`.
 """
 
+import json
+import logging
+import logging.handlers
+import os
+import posixpath
+import re
+import signal
+import socket
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
+
 import collector
+import config
+import ctl
+import gqlclient
+import store
 
 BACKOFF_CAP = 600          # seconds; the slow lane's interval is the ceiling
 UNKNOWN_AFTER = 3          # consecutive all-domain failures before a node is unknown
+MAX_WORKERS = 8
+NCHAN_CHANNEL = 'unraid-manager'
+
+# The presence of this directory is what "the box has a pool" means: /mnt/user
+# exists exactly when the array is up and there is somewhere durable to write.
+# A module-level name so a test can point it somewhere real.
+POOL_MARKER = '/mnt/user'
+
+log = logging.getLogger('managerd')
 
 
 class _NodeState(object):
@@ -103,3 +128,315 @@ class Scheduler(object):
         if state is None:
             return
         state.failures = 0 if any_ok else state.failures + 1
+
+
+def setup_logging(path=ctl.LOG_PATH):
+    """Size-capped file logging: 1 MB x 2. rootfs is tmpfs -- an unbounded log
+    here is RAM, not disk."""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    handler = logging.handlers.RotatingFileHandler(
+        path, maxBytes=1024 * 1024, backupCount=2)
+    handler.setFormatter(logging.Formatter('%(asctime)s %(levelname)s %(message)s'))
+    logger = logging.getLogger('managerd')
+    logger.handlers = [handler]
+    logger.setLevel(logging.INFO)
+    return logger
+
+
+def check_db_path_is_durable(db_path):
+    """Refuse /tmp when the box has a pool to use instead (spec section 4.4).
+
+    store.validate_db_path refuses flash, which is a property of the path alone.
+    This one needs a runtime fact - is there a pool at all - so it lives here,
+    where the daemon starts, rather than in the pure validator. A box with no
+    array up has nowhere better, so /tmp stays tolerated there.
+    """
+    posix = posixpath.normpath(str(db_path).replace('\\', '/'))
+    if posix != '/tmp' and not posix.startswith('/tmp/'):
+        return
+    if not os.path.isdir(POOL_MARKER):
+        return
+    raise ValueError(
+        'db_path %r is under /tmp and is lost on reboot. This box has a pool - '
+        'point db_path at it, e.g. /mnt/user/appdata/unraid-manager' % db_path)
+
+
+def nchan_endpoint(servers_conf_text):
+    """The local socket nginx's nchan publisher listens on, or None.
+
+    Discovered rather than hardcoded: the path is Unraid's, not ours, and a
+    version that moves it should cost us live updates, not a crash. The UI's
+    30-second fallback poll covers the None case.
+    """
+    if not servers_conf_text:
+        return None
+    if 'nchan_publisher' not in servers_conf_text:
+        return None
+    match = re.search(r'listen\s+unix:(\S+?);', servers_conf_text)
+    return match.group(1) if match else None
+
+
+def _publish_over(sock_path):
+    """Return a publish_fn that POSTs a delta to the nchan publisher socket."""
+    def publish(message):
+        body = json.dumps(message, separators=(',', ':')).encode('utf-8')
+        request = (b'POST /pub/' + NCHAN_CHANNEL.encode() + b' HTTP/1.0\r\n'
+                   b'Content-Type: application/json\r\n'
+                   b'Content-Length: ' + str(len(body)).encode() + b'\r\n\r\n' + body)
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        sock.settimeout(2.0)
+        try:
+            sock.connect(sock_path)
+            sock.sendall(request)
+            sock.recv(256)
+        finally:
+            sock.close()
+    return publish
+
+
+class Manager(object):
+    """Owns the database connection, the schedule and the worker pool."""
+
+    def __init__(self, conn, cfg, keys_dir=config.KEYS_DIR, post_fn=None, publish_fn=None):
+        check_db_path_is_durable(cfg.get('db_path'))
+        self.conn = conn
+        self.cfg = cfg
+        self.keys_dir = keys_dir
+        self.post_fn = post_fn or gqlclient.post
+        self.publish_fn = publish_fn
+        self.publishing = publish_fn is not None
+        self.scheduler = Scheduler(cfg['poll_fast'], cfg['poll_slow'])
+        # main() supplies the real pool. None here so that constructing a
+        # Manager is complete on its own: tick() is the only user, and a test
+        # that calls it without a pool should get a clear AttributeError on
+        # None rather than one about a missing attribute.
+        self.pool = None
+        self.started_at = time.time()
+        self._lock = threading.Lock()          # sqlite3 connections are not thread-safe
+        self._last_status = {}                 # (node, domain) -> status, for change detection
+        self._down = set()                     # nodes already journalled as down
+
+    # Seams the tests replace; production reads flash.
+    def _read_nodes(self):
+        return config.read_nodes_cfg(config.NODES_CFG)
+
+    def _read_key(self, node_id):
+        return config.read_key(self.keys_dir, node_id)
+
+    def _node(self, node_id):
+        row = self.conn.execute('SELECT * FROM nodes WHERE id=?', (node_id,)).fetchone()
+        return dict(row) if row else None
+
+    def reload(self):
+        """Re-read the flash registry and make SQLite and the schedule match."""
+        nodes = self._read_nodes()
+        with self._lock:
+            result = store.sync_registry(self.conn, nodes)
+            for node_id in result['added']:
+                store.log_event(self.conn, 'enroll', 'node enrolled', node_id=node_id)
+            for node_id in result['removed']:
+                store.log_event(self.conn, 'remove', 'node removed from the registry',
+                                node_id=node_id)
+        self.scheduler.set_nodes([n['id'] for n in nodes if n.get('enabled', True)])
+        log.info('reload: +%d ~%d -%d', len(result['added']), len(result['updated']),
+                 len(result['removed']))
+        return result
+
+    def run_cycle(self, node_id, lane, now):
+        """Poll one node's lane. Never raises; that is the contract with the pool."""
+        node = self._node(node_id)
+        if node is None:
+            return {}
+        key = self._read_key(node_id)
+        target = dict(node, key=key)
+
+        results = []
+        for domain in collector.domains_for_lane(lane):
+            if key is None:
+                results.append(collector.Result(
+                    domain.name, 'unknown', None,
+                    'no API key on file for this node - re-enter it on the settings page', []))
+                continue
+            results.append(collector.collect(self.post_fn, target, domain))
+
+        stamp = store.utcnow()
+        changed = {}
+        with self._lock:
+            for result in results:
+                store.upsert_state(self.conn, node_id, result.domain, result.status,
+                                   payload=result.payload, error=result.error,
+                                   fetched_at=stamp if result.status == 'ok' else None)
+                if result.samples:
+                    store.add_samples(self.conn, node_id, result.samples, ts=stamp)
+                if self._last_status.get((node_id, result.domain)) != result.status:
+                    changed[result.domain] = result.status
+                self._last_status[(node_id, result.domain)] = result.status
+
+            any_ok = any(r.status == 'ok' for r in results)
+            if any_ok:
+                store.touch_last_seen(self.conn, node_id, ts=stamp)
+
+        if lane == collector.FAST:
+            self.scheduler.record(node_id, any_ok=any_ok)
+            # One journal row per transition, not one per failed cycle: a node
+            # down overnight would otherwise write a thousand identical rows and
+            # push everything else past the retention cap.
+            if not any_ok and node_id not in self._down:
+                self._down.add(node_id)
+                with self._lock:
+                    store.log_event(self.conn, 'poll_fail',
+                                    'node unreadable: %s'
+                                    % (results[0].error if results else 'unknown'),
+                                    node_id=node_id)
+            elif any_ok and node_id in self._down:
+                self._down.discard(node_id)
+                with self._lock:
+                    store.log_event(self.conn, 'poll_ok', 'node readable again', node_id=node_id)
+
+        if changed:
+            self._publish({'node_id': node_id, 'domains': changed, 'ts': stamp})
+        return changed
+
+    def _publish(self, message):
+        """A ping saying something changed -- never the data itself.
+
+        Payloads go over the authenticated PHP API; nchan carries only the
+        nudge that makes the browser ask for them.
+        """
+        if not self.publishing or self.publish_fn is None:
+            return
+        try:
+            self.publish_fn(message)
+        except Exception as exc:                  # noqa: BLE001
+            # Logged once, then off until reload. The 30s fallback poll in the
+            # browser is the safety net, so a silent nchan degrades refresh
+            # rate and nothing else.
+            log.warning('nchan publish failed, disabling until reload: %s', exc)
+            self.publishing = False
+
+    def tick(self, now):
+        """Dispatch everything due. Returns how many jobs were submitted."""
+        jobs = self.scheduler.due(now)
+        for node_id, lane in jobs:
+            self.pool.submit(self._safe_cycle, node_id, lane, now)
+        return len(jobs)
+
+    def _safe_cycle(self, node_id, lane, now):
+        try:
+            self.run_cycle(node_id, lane, now)
+        except Exception:                          # noqa: BLE001
+            log.exception('cycle failed for %s/%s', node_id, lane)
+
+    def status(self):
+        rows = self.conn.execute('SELECT id,name,last_seen FROM nodes ORDER BY name').fetchall()
+        return {
+            'uptime': int(time.time() - self.started_at),
+            'publishing': self.publishing,
+            'nodes': [{'id': r['id'], 'name': r['name'], 'last_seen': r['last_seen'],
+                       'failures': self.scheduler.consecutive_failures(r['id']),
+                       'interval': self.scheduler.interval(r['id']),
+                       'unknown': self.scheduler.is_unknown(r['id'])} for r in rows],
+        }
+
+    def _test_node(self, args):
+        """Probe a candidate, or re-probe a node that is already enrolled.
+
+        Two forms. {address, port, key} is enrollment: the key was just typed
+        into a form, is used for this one probe, and is dropped -- nothing is
+        written. {node_id} is the Test button beside an enrolled node: the key
+        is read from flash HERE, by the daemon, so the PHP layer never handles
+        key material for a node it has already enrolled and a browser never has
+        to send one back to get a node re-checked.
+        """
+        node_id = args.get('node_id')
+        if node_id:
+            node = self._node(node_id)
+            if node is None:
+                raise ValueError('no such node: %s' % node_id)
+            key = self._read_key(node_id)
+            if key is None:
+                raise ValueError('no API key on file for this node')
+            address, port = node['address'], node['port']
+        else:
+            address, port, key = args['address'], args['port'], args.get('key')
+        return collector.probe(self.post_fn, address, int(port), key)
+
+    def handlers(self):
+        return {
+            'status': lambda args: self.status(),
+            'reload': lambda args: self.reload(),
+            'poll_now': lambda args: {
+                'scheduled': self.scheduler.poll_now(args.get('node_id')) or True},
+            'prune': lambda args: store.prune(self.conn, vacuum=bool(args.get('vacuum'))),
+            'test_node': self._test_node,
+        }
+
+
+def main(argv=None):
+    setup_logging()
+    cfg = config.read_manager_cfg()
+    try:
+        conn = store.connect(cfg['db_path'])
+    except ValueError as exc:
+        log.error('refusing to start: %s', exc)
+        print('unraid-manager: %s' % exc)
+        return 2
+
+    try:
+        manager = Manager(conn, cfg)
+    except ValueError as exc:
+        # The /tmp guard, which needs a live filesystem and so cannot live in
+        # store.validate_db_path with the flash check.
+        log.error('refusing to start: %s', exc)
+        print('unraid-manager: %s' % exc)
+        conn.close()
+        return 2
+
+    endpoint = None
+    try:
+        with open('/etc/nginx/conf.d/servers.conf', 'r', encoding='utf-8') as fh:
+            endpoint = nchan_endpoint(fh.read())
+    except OSError:
+        pass
+    if endpoint:
+        manager.publish_fn = _publish_over(endpoint)
+        manager.publishing = True
+        log.info('nchan publisher at %s', endpoint)
+    else:
+        log.info('no nchan publisher found; the UI will fall back to polling')
+
+    manager.pool = ThreadPoolExecutor(max_workers=MAX_WORKERS)
+    manager.reload()
+    store.log_event(conn, 'daemon', 'managerd started')
+
+    stop = threading.Event()
+    signal.signal(signal.SIGTERM, lambda *a: stop.set())
+    signal.signal(signal.SIGINT, lambda *a: stop.set())
+
+    listener = threading.Thread(
+        target=ctl.serve, args=(ctl.SOCKET_PATH, manager.handlers(), stop), daemon=True)
+    listener.start()
+
+    os.makedirs(ctl.RUN_DIR, exist_ok=True)
+    with open(ctl.PID_PATH, 'w', encoding='utf-8') as fh:
+        fh.write(str(os.getpid()))
+
+    try:
+        while not stop.is_set():
+            manager.tick(time.time())
+            stop.wait(1.0)
+    finally:
+        log.info('shutting down')
+        manager.pool.shutdown(wait=True)
+        store.log_event(conn, 'daemon', 'managerd stopped')
+        conn.close()
+        try:
+            os.unlink(ctl.PID_PATH)
+        except OSError:
+            pass
+    return 0
+
+
+if __name__ == '__main__':
+    import sys
+    sys.exit(main())

@@ -186,3 +186,28 @@ def log_event(conn, kind, message, node_id=None):
 def touch_last_seen(conn, node_id, ts=None):
     conn.execute('UPDATE nodes SET last_seen=? WHERE id=?', (ts or utcnow(), node_id))
     conn.commit()
+
+
+def prune(conn, now=None, sample_days=7, event_cap=10000, vacuum=False):
+    """Retention, per spec section 4. Runs daily from cron; VACUUM weekly.
+
+    Timestamps are lexically comparable ISO-8601 UTC, so the cutoff is a string
+    comparison -- which also means a row with a malformed ts sorts outside the
+    window and is left alone rather than deleted. That is the safe direction.
+    """
+    stamp = now or utcnow()
+    cutoff = (datetime.datetime.strptime(stamp, '%Y-%m-%dT%H:%M:%SZ')
+              - datetime.timedelta(days=sample_days)).strftime('%Y-%m-%dT%H:%M:%SZ')
+
+    samples = conn.execute(
+        "DELETE FROM samples WHERE ts < ? AND ts LIKE '____-__-__T__:__:__Z'",
+        (cutoff,)).rowcount
+    events = conn.execute(
+        'DELETE FROM events WHERE id NOT IN '
+        '(SELECT id FROM events ORDER BY id DESC LIMIT ?)', (event_cap,)).rowcount
+    conn.commit()
+
+    if vacuum:
+        conn.execute('VACUUM')
+
+    return {'samples': max(samples, 0), 'events': max(events, 0), 'vacuumed': bool(vacuum)}

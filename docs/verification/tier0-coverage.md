@@ -79,6 +79,22 @@ seed fixtures were found to encode shapes the API cannot return.
    Golem's 300+ entry history. `OK` is not a member of the enum and never appears.
 7. **API keys are 64 lowercase hex characters** on both boxes — relevant to any
    credential-shaped scanning threshold.
+8. **The nulls are NOT an empty-array artifact.** Golem — a populated array with 300+
+   history entries — returns `{"status":"COMPLETED","progress":0,"errors":null,
+   "correcting":null,"paused":null,"running":null}`. Every non-running parity state
+   nulls those four subfields, on both boxes. Treat null as the normal idle reading.
+9. **`Share.include` / `Share.exclude` are LISTS, not strings** — live returns `[]`.
+   The type names recorded earlier in this document were produced by an introspection
+   helper that unwrapped LIST wrappers when printing, so any `String` in those earlier
+   notes may really be `[String]`. Check the raw schema dump's `ofType` chain, not the
+   flattened name, before trusting a scalar type here.
+10. **Share count is NOT a stable invariant.** Golem reported 39 shares on 2026-08-25 and
+   36 on 2026-08-26. Real share sets include disk shares (`disk1`..`disk23`) alongside
+   user shares. No test or fixture may assert an exact share count.
+   Real sample, verbatim: `{"name":"domains","free":168788140,"used":830927229,"size":0,
+   "include":[],"exclude":[],"cache":null,"nameOrig":"domains","comment":"saved VM instances",
+   "allocator":"highwater","splitLevel":"","floor":"1000000","cow":"auto","color":"yellow-on",
+   "luksStatus":"0"}`
 
 ## Still open
 

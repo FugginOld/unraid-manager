@@ -1,0 +1,79 @@
+Menu="Utilities"
+Title="Unraid-Manager"
+Icon="icon.png"
+---
+<?PHP
+/* Settings and node enrollment. Plain webGUI markup — the Svelte pane is P1. */
+$um_csrf = $var['csrf_token'] ?? '';
+?>
+<link rel="stylesheet" href="/plugins/unraid-manager/unraid-manager.css">
+
+<div id="um-settings" data-csrf="<?= htmlspecialchars($um_csrf) ?>">
+
+  <div class="title"><span class="left">Manager</span></div>
+  <table class="settings">
+    <tr>
+      <td>Database path:</td>
+      <td><input type="text" id="um-db-path" size="48" placeholder="/mnt/user/appdata/unraid-manager">
+        <span class="um-hint">On a pool, never on the flash drive — telemetry is written
+          continuously and flash wears out.</span></td>
+    </tr>
+    <tr>
+      <td>Fast poll (seconds):</td>
+      <td><input type="number" id="um-poll-fast" min="5" max="86400" value="30">
+        <span class="um-hint">Array, shares, metrics, notifications.</span></td>
+    </tr>
+    <tr>
+      <td>Slow poll (seconds):</td>
+      <td><input type="number" id="um-poll-slow" min="5" max="86400" value="600">
+        <span class="um-hint">Physical disks and plugins. Deliberately slow: a disk
+          enumeration can take a minute or more.</span></td>
+    </tr>
+    <tr>
+      <td>&nbsp;</td>
+      <td><button type="button" id="um-save-settings">Save</button>
+        <span id="um-settings-msg" class="um-msg"></span></td>
+    </tr>
+  </table>
+
+  <div class="title"><span class="left">Daemon</span></div>
+  <p id="um-daemon-status" class="um-daemon">Checking…</p>
+  <p>
+    <button type="button" id="um-daemon-start">Start</button>
+    <button type="button" id="um-daemon-stop">Stop</button>
+    <button type="button" id="um-daemon-restart">Restart</button>
+    <span id="um-daemon-msg" class="um-msg"></span>
+  </p>
+
+  <div class="title"><span class="left">Enrolled nodes</span></div>
+  <table class="tablesorter" id="um-node-table">
+    <thead><tr><th>Name</th><th>Address</th><th>Key</th><th>Last seen</th><th>Actions</th></tr></thead>
+    <tbody id="um-node-rows"><tr><td colspan="5">Loading…</td></tr></tbody>
+  </table>
+
+  <div class="title"><span class="left">Enroll a node</span></div>
+  <table class="settings">
+    <tr><td>Address:</td><td><input type="text" id="um-address" size="24" placeholder="192.168.2.19"></td></tr>
+    <tr><td>API port:</td><td><input type="number" id="um-port" min="1" max="65535" placeholder="29220"></td></tr>
+    <tr><td>Name:</td><td><input type="text" id="um-name" size="24" placeholder="taken from the node if left blank"></td></tr>
+    <tr>
+      <td>API key:</td>
+      <td><input type="password" id="um-key" size="48" autocomplete="new-password">
+        <span class="um-hint">Create one on that box with
+          <code>unraid-api apikey --create</code>. Read scope is enough. It is stored on
+          this server's flash at mode 0600 and is never shown again.</span></td>
+    </tr>
+    <tr>
+      <td>&nbsp;</td>
+      <td>
+        <button type="button" id="um-probe">Probe</button>
+        <button type="button" id="um-enroll" disabled>Enroll</button>
+        <span id="um-enroll-msg" class="um-msg"></span>
+      </td>
+    </tr>
+  </table>
+
+  <div id="um-probe-report"></div>
+</div>
+
+<script src="/plugins/unraid-manager/settings.js"></script>

@@ -1,0 +1,19 @@
+/* P0 styling: minimal, and inheriting Unraid's theme rather than choosing one.
+   The --um-* token set is P1 (plan §10.2). Every status class pairs its colour
+   with a glyph and a word in the markup — colour alone is never the carrier. */
+.um-hint     { display: block; opacity: .75; font-size: .9em; }
+.um-msg      { margin-left: 1em; }
+.um-good     { color: #3aa757; }
+.um-bad      { color: #cf3b3b; }
+.um-ok       { color: #3aa757; }
+.um-error    { color: #e07b39; }
+.um-degraded { color: #e07b39; }
+/* unknown is grey and dotted-underlined: distinct from ok, and distinct from a
+   failure. A node we cannot see must never look like a healthy one, and must
+   never look like a red alarm either — a red card that means "I can't see it"
+   trains operators to ignore red. */
+.um-unknown  { color: #7a7a7a; border-bottom: 1px dotted #7a7a7a; }
+.um-stale    { padding: .5em; border: 1px solid #d9a400; margin-bottom: 1em; }
+.um-capbar   { display: inline-block; width: 8em; height: .8em; background: rgba(128,128,128,.3); vertical-align: middle; }
+.um-capbar > span { display: block; height: 100%; background: currentColor; }
+.um-daemon   { margin: .5em 0 1em 0; }

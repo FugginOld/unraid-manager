@@ -5,6 +5,7 @@ flash. The daemon is the only writer; the PHP layer opens this database
 read-only (spec section 5). Keys are never stored in it.
 """
 import datetime
+import json
 import os
 import posixpath
 import sqlite3
@@ -83,3 +84,105 @@ def connect(db_dir):
     conn.execute('PRAGMA user_version=%d' % SCHEMA_VERSION)
     conn.commit()
     return conn
+
+
+VALID_STATUS = ('ok', 'error', 'unknown')
+
+_NODE_FIELDS = ('name', 'address', 'port', 'tier', 'enabled')
+
+
+def sync_registry(conn, nodes):
+    """Make the nodes table match the flash registry exactly.
+
+    The flash cfg is authoritative: it survives loss of the pool. A node that is
+    no longer in it is gone, and its telemetry goes with it - otherwise a
+    re-enrolled address inherits a stranger's history.
+    """
+    existing = {r['id']: r for r in conn.execute('SELECT * FROM nodes')}
+    seen = set()
+    added, updated = [], []
+
+    for node in nodes:
+        node_id = node['id']
+        seen.add(node_id)
+        values = (node['name'], node['address'], int(node['port']),
+                  int(node.get('tier', 0)), 1 if node.get('enabled', True) else 0)
+        if node_id not in existing:
+            conn.execute(
+                'INSERT INTO nodes(id,name,address,port,tier,enabled,added_at) '
+                'VALUES(?,?,?,?,?,?,?)', (node_id,) + values + (utcnow(),))
+            added.append(node_id)
+            continue
+        row = existing[node_id]
+        if tuple(row[f] for f in _NODE_FIELDS) != values:
+            conn.execute(
+                'UPDATE nodes SET name=?,address=?,port=?,tier=?,enabled=? WHERE id=?',
+                values + (node_id,))
+            updated.append(node_id)
+
+    removed = [i for i in existing if i not in seen]
+    for node_id in removed:
+        for table in ('node_state', 'samples', 'events'):
+            conn.execute('DELETE FROM %s WHERE node_id=?' % table, (node_id,))
+        conn.execute('DELETE FROM nodes WHERE id=?', (node_id,))
+
+    conn.commit()
+    return {'added': added, 'updated': updated, 'removed': removed}
+
+
+def upsert_state(conn, node_id, domain, status, payload=None, error=None, fetched_at=None):
+    """Record one domain's outcome.
+
+    A failed or unreadable poll keeps the last-good payload and the fetched_at
+    that goes with it: the UI shows what was last true and says when, which is
+    a different and more useful thing than showing nothing. Constraint 5 lives
+    in the status column, not in the payload.
+    """
+    if status not in VALID_STATUS:
+        raise ValueError('status must be one of %r, got %r' % (VALID_STATUS, status))
+
+    if status == 'ok':
+        conn.execute(
+            'INSERT INTO node_state(node_id,domain,status,error,fetched_at,payload) '
+            'VALUES(?,?,?,NULL,?,?) '
+            'ON CONFLICT(node_id,domain) DO UPDATE SET '
+            'status=excluded.status, error=NULL, fetched_at=excluded.fetched_at, '
+            'payload=excluded.payload',
+            (node_id, domain, status, fetched_at or utcnow(),
+             json.dumps(payload if payload is not None else {}, separators=(',', ':'))))
+    else:
+        conn.execute(
+            'INSERT INTO node_state(node_id,domain,status,error,fetched_at,payload) '
+            'VALUES(?,?,?,?,NULL,NULL) '
+            'ON CONFLICT(node_id,domain) DO UPDATE SET '
+            'status=excluded.status, error=excluded.error',
+            (node_id, domain, status, error))
+    conn.commit()
+
+
+def add_samples(conn, node_id, rows, ts=None):
+    """Append numeric series points. Non-numeric values are dropped, not raised:
+    a metric a box does not report must not cost us the ones it does."""
+    stamp = ts or utcnow()
+    payload = []
+    for metric, value in rows:
+        try:
+            payload.append((node_id, metric, stamp, float(value)))
+        except (TypeError, ValueError):
+            continue
+    if payload:
+        conn.executemany('INSERT INTO samples(node_id,metric,ts,value) VALUES(?,?,?,?)', payload)
+        conn.commit()
+    return len(payload)
+
+
+def log_event(conn, kind, message, node_id=None):
+    cur = conn.execute('INSERT INTO events(ts,node_id,kind,message) VALUES(?,?,?,?)',
+                       (utcnow(), node_id, kind, message))
+    conn.commit()
+    return cur.lastrowid
+
+
+def touch_last_seen(conn, node_id, ts=None):
+    conn.execute('UPDATE nodes SET last_seen=? WHERE id=?', (ts or utcnow(), node_id))
+    conn.commit()

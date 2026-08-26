@@ -37,14 +37,23 @@ TYPES = _load_schema()
 
 
 def _field_shape(field):
-    """Unwrap NON_NULL/LIST wrappers -> (is_list, kind, type_name)."""
+    """Unwrap NON_NULL/LIST wrappers -> (is_list, kind, type_name, is_non_null).
+
+    is_non_null reflects only the field's outermost wrapper: the field itself
+    cannot be null. It does not track a NON_NULL wrapper on list *items*
+    (e.g. the `!` in `[ArrayDisk!]!`) — no current fixture exercises a null
+    list item, and every field this walker rejects null on today (array.state,
+    array.parityCheckStatus, Query.array itself, Disk.smartStatus/size) is
+    caught by the outer check alone.
+    """
+    is_non_null = field['type']['kind'] == 'NON_NULL'
     is_list = False
     t = field['type']
     while t['kind'] in ('NON_NULL', 'LIST'):
         if t['kind'] == 'LIST':
             is_list = True
         t = t['ofType']
-    return is_list, t['kind'], t['name']
+    return is_list, t['kind'], t['name'], is_non_null
 
 
 QUERY_FIELDS = {f['name']: _field_shape(f) for f in TYPES['Query']['fields']}
@@ -89,8 +98,8 @@ def _check_node(value, kind, type_name, path):
         for key, sub in value.items():
             if key not in fields:
                 raise AssertionError('unknown field %s.%s at %s' % (type_name, key, path))
-            is_list, fkind, fname = _field_shape(fields[key])
-            _check_field(sub, is_list, fkind, fname, path + '.' + key)
+            is_list, fkind, fname, fnn = _field_shape(fields[key])
+            _check_field(sub, is_list, fkind, fname, path + '.' + key, fnn)
     elif kind == 'ENUM':
         members = {e['name'] for e in TYPES[type_name]['enumValues']}
         if value not in members:
@@ -100,15 +109,22 @@ def _check_node(value, kind, type_name, path):
         if not isinstance(value, dict):
             raise AssertionError('expected union object at %s, got %r' % (path, value))
     else:
-        # SCALAR leaf: never a dict or list, and must match its declared type.
+        # SCALAR leaf. JSON is checked first: it's the one scalar the schema
+        # legitimately types as an arbitrary object/array (DockerContainer.
+        # labels/mounts, InfoCpu.cache — 36 fields total), so the dict/list
+        # rejection below must not run for it.
+        if type_name == 'JSON':
+            return
         if isinstance(value, (dict, list)):
             raise AssertionError('expected scalar at %s, got %r' % (path, value))
         if not _scalar_ok(type_name, value):
             raise AssertionError('%s: expected %s, got %r' % (path, type_name, value))
 
 
-def _check_field(value, is_list, kind, type_name, path):
+def _check_field(value, is_list, kind, type_name, path, is_non_null=False):
     if value is None:
+        if is_non_null:
+            raise AssertionError('%s: NON_NULL field is null' % path)
         return
     if is_list:
         if not isinstance(value, list):
@@ -127,8 +143,8 @@ def assert_fixture_matches_schema(name, doc):
     for key, value in data.items():
         if key not in QUERY_FIELDS:
             raise AssertionError('%s: unknown Query field %r' % (name, key))
-        is_list, kind, type_name = QUERY_FIELDS[key]
-        _check_field(value, is_list, kind, type_name, '%s:%s' % (name, key))
+        is_list, kind, type_name, is_non_null = QUERY_FIELDS[key]
+        _check_field(value, is_list, kind, type_name, '%s:%s' % (name, key), is_non_null)
 
 
 class TestSeedFixtures(unittest.TestCase):
@@ -189,6 +205,21 @@ class TestSeedFixtures(unittest.TestCase):
             if pc['status'] != 'RUNNING':
                 for field in ('errors', 'correcting', 'paused', 'running'):
                     self.assertIsNone(pc[field], '%s.parityCheckStatus.%s' % (name, field))
+
+    def test_parity_history_and_check_status_null_asymmetrically(self):
+        # tier0-coverage.md item 11: parityHistory rows and array.parityCheck
+        # Status share a GraphQL type (ParityCheck) but null OPPOSITE fields —
+        # a history row has progress null / errors non-null, an idle check
+        # status has progress non-null / errors null. A parser shared across
+        # both contexts is wrong in one of them; pin the asymmetry explicitly.
+        for row in context.fixture_json('seed/parity.json')['data']['parityHistory']:
+            self.assertIsNone(row['progress'], row)
+            self.assertIsNotNone(row['errors'], row)
+        for name in ('array_populated.json', 'array_empty.json'):
+            pc = context.fixture_json('seed/' + name)['data']['array']['parityCheckStatus']
+            if pc['status'] != 'RUNNING':
+                self.assertIsNotNone(pc['progress'], name)
+                self.assertIsNone(pc['errors'], name)
 
     def test_empty_array_has_no_parities_and_thirty_free_slots(self):
         # Raven's real healthy-but-empty state: this is the trap the schema

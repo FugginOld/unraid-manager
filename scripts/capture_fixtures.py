@@ -102,9 +102,10 @@ def main():
     # seed/ baseline this script must never overwrite. os.path.basename(label)
     # != label also catches a drive-relative label like "D:evil", which has
     # no path separator but os.path.join still resolves outside the tree.
-    if (os.path.isabs(args.label) or os.path.basename(args.label) != args.label
+    if (not args.label or os.path.isabs(args.label) or os.path.basename(args.label) != args.label
             or ':' in args.label or args.label in ('.', '..', 'seed')):
-        print("--label must be a plain directory name, not a path, and not 'seed'", file=sys.stderr)
+        print("--label must be a non-empty plain directory name, not a path, and not 'seed'",
+              file=sys.stderr)
         return 2
 
     key = os.environ.get('UNRAID_API_KEY') or getpass.getpass('API key for %s: ' % args.host)

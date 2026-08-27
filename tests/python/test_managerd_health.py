@@ -100,6 +100,39 @@ class TestHysteresisAcrossCycles(HealthCycleCase):
         self.assertEqual('warn', self.health('capacity')['state'])
 
 
+class TestErrorWindow(HealthCycleCase):
+    def test_the_window_looks_BACKWARDS_not_forwards(self):
+        # Flipping the timedelta's sign makes the cutoff a future timestamp, so
+        # recent_samples always returns nothing and disk_errors is permanently
+        # unknown - a dead indicator that looks fine. Nothing else pins the sign.
+        #
+        # TWO cycles, because first sighting only arms the counter: one call
+        # leaves this at ok/pending=warn by design. Same shape as
+        # test_two_agreeing_cycles_escalate.
+        m = self.manager()
+        store.add_samples(self.conn, 'a1b2', [('array.errors_total', 0)],
+                          ts='2026-08-27T11:55:00Z')
+        store.add_samples(self.conn, 'a1b2', [('array.errors_total', 7)],
+                          ts='2026-08-27T11:59:00Z')
+        m._update_health('a1b2', [], '2026-08-27T12:00:00Z')
+        first = store.read_health(self.conn, 'a1b2')['disk_errors']
+        self.assertEqual('warn', first['pending_state'], 'the rise was seen at once')
+
+        m._update_health('a1b2', [], '2026-08-27T12:00:30Z')
+        row = store.read_health(self.conn, 'a1b2')['disk_errors']
+        self.assertEqual('warn', row['state'], 'samples inside the window must be seen')
+
+    def test_a_sample_older_than_the_window_is_ignored(self):
+        m = self.manager()
+        store.add_samples(self.conn, 'a1b2', [('array.errors_total', 0)],
+                          ts='2026-08-27T10:00:00Z')
+        store.add_samples(self.conn, 'a1b2', [('array.errors_total', 7)],
+                          ts='2026-08-27T10:05:00Z')
+        m._update_health('a1b2', [], '2026-08-27T12:00:00Z')
+        row = store.read_health(self.conn, 'a1b2')['disk_errors']
+        self.assertEqual('unknown', row['state'], 'an hour-old rise is not news')
+
+
 class TestOverall(HealthCycleCase):
     def test_a_healthy_node_with_a_warn_indicator_is_degraded(self):
         m = self.manager()

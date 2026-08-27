@@ -10,7 +10,7 @@ import os
 import posixpath
 import sqlite3
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 DB_FILENAME = 'manager.db'
 
 
@@ -82,6 +82,26 @@ def validate_db_path(raw):
     return normalized
 
 
+# Tables that hold DERIVED state - rebuilt from the next poll, so dropping one
+# on an upgrade costs a refresh interval and nothing else. node_state, samples
+# and events hold history and must NEVER appear here.
+DERIVED_TABLES = ('node_health',)
+
+
+def migrate(conn, version):
+    """Bring an older database forward. Only derived tables are ever dropped.
+
+    CREATE TABLE IF NOT EXISTS is a no-op against an existing table, so a schema
+    change to node_health - widening its CHECK, adding a column - never reaches
+    a database created by an earlier version. Dropping and letting the schema
+    script recreate it is correct precisely because nothing in it is original data.
+    """
+    if not version or version >= SCHEMA_VERSION:
+        return
+    for table in DERIVED_TABLES:
+        conn.execute('DROP TABLE IF EXISTS %s' % table)
+
+
 def connect(db_dir):
     """Open (creating if needed) the manager database under db_dir."""
     db_dir = validate_db_path(db_dir)
@@ -99,6 +119,7 @@ def connect(db_dir):
     conn.row_factory = sqlite3.Row
     conn.execute('PRAGMA journal_mode=WAL')
     conn.execute('PRAGMA foreign_keys=ON')
+    migrate(conn, conn.execute('PRAGMA user_version').fetchone()[0])
     conn.executescript(SCHEMA)
     conn.execute('PRAGMA user_version=%d' % SCHEMA_VERSION)
     conn.commit()

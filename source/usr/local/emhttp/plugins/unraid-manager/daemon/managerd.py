@@ -287,7 +287,6 @@ class Manager(object):
                 store.touch_last_seen(self.conn, node_id, ts=stamp)
 
         if lane == collector.FAST:
-            self._update_health(node_id, results, stamp)
             self.scheduler.record(node_id, any_ok=any_ok)
             # One journal row per transition, not one per failed cycle: a node
             # down overnight would otherwise write a thousand identical rows and
@@ -303,6 +302,14 @@ class Manager(object):
                 self._down.discard(node_id)
                 with self._lock:
                     store.log_event(self.conn, 'poll_ok', 'node readable again', node_id=node_id)
+            # Order is load-bearing. _safe_cycle swallows and logs any exception
+            # from a cycle, so anything raised by health evaluation would skip
+            # whatever follows it. Put it first and one bad evaluation silently
+            # disables backoff, the unknown threshold and the event journal for
+            # that node - the daemon would keep hammering an unreachable box
+            # every 30s with nothing in the log to say why. Health is the least
+            # critical of the three; it goes last.
+            self._update_health(node_id, results, stamp)
 
         if changed:
             self._publish({'node_id': node_id, 'domains': changed, 'ts': stamp})
@@ -315,50 +322,58 @@ class Manager(object):
         """Evaluate this cycle's payloads, debounce, and persist. Returns the
         node's overall state.
 
-        Fast lane only: the indicators are all computed from fast-lane payloads,
-        and running this after a slow cycle would evaluate an absent array
-        payload and report unknown for a node that is perfectly readable.
+        Fast lane only: every indicator comes from a fast-lane payload, and
+        running this after a slow cycle would evaluate an absent array payload
+        and report unknown for a node that is perfectly readable.
         """
         thresholds = {k: self.cfg[k] for k in self.HEALTH_THRESHOLDS if k in self.cfg}
         payloads = {r.domain: r.payload for r in results if r.status == 'ok'}
 
-        window = int(thresholds.get('error_window_min', health.DEFAULT_THRESHOLDS
-                                    ['error_window_min']))
+        window = int(thresholds.get('error_window_min',
+                                    health.DEFAULT_THRESHOLDS['error_window_min']))
         cutoff = (datetime.datetime.strptime(stamp, '%Y-%m-%dT%H:%M:%SZ')
                   - datetime.timedelta(minutes=window)).strftime('%Y-%m-%dT%H:%M:%SZ')
 
+        # ONE lock around the whole read-modify-write. Scheduler.due marks a
+        # lane dispatched when it hands it out, not when it finishes, so a fast
+        # cycle that outruns its own interval - six domains at a 10s timeout
+        # against a 30s interval, on exactly the sick node whose health matters
+        # most - can be re-dispatched while the first is still in flight. Two
+        # runs would then read the same `previous`, both write pending_count=1,
+        # and whichever finished last would stamp an older `updated_at` over the
+        # newer row. The evaluation in the middle is pure and takes
+        # microseconds, so holding the lock across it costs nothing.
         with self._lock:
             errors_history = store.recent_samples(self.conn, node_id,
                                                   'array.errors_total', cutoff)
             previous = store.read_health(self.conn, node_id)
 
-        indicators = health.evaluate(payloads, thresholds, errors_history)
-        settled = {}
-        rows = []
-        for name, proposed in indicators.items():
-            prior = previous.get(name) or {}
-            # A node with no row yet starts from OK, NOT from whatever this poll
-            # proposes. Seeding with the proposal makes current == proposed on
-            # the first sighting, which returns immediately and means hysteresis
-            # never engages for a newly enrolled node.
-            state, pending_state, pending_count = health.apply_hysteresis(
-                prior.get('state') or health.OK, proposed.state,
-                prior.get('pending_state'), prior.get('pending_count') or 0)
-            settled[name] = health.Indicator(state, proposed.value, proposed.basis)
-            rows.append((name, state, proposed.value, proposed.basis,
-                         pending_state, pending_count))
+            indicators = health.evaluate(payloads, thresholds, errors_history)
+            settled = {}
+            rows = []
+            for name, proposed in indicators.items():
+                prior = previous.get(name) or {}
+                # A node with no row yet starts from OK, NOT from whatever this
+                # poll proposes. Seeding with the proposal makes current ==
+                # proposed on the first sighting, which returns immediately and
+                # means hysteresis never engages for a newly enrolled node.
+                state, pending_state, pending_count = health.apply_hysteresis(
+                    prior.get('state') or health.OK, proposed.state,
+                    prior.get('pending_state'), prior.get('pending_count') or 0)
+                settled[name] = health.Indicator(state, proposed.value, proposed.basis)
+                rows.append((name, state, proposed.value, proposed.basis,
+                             pending_state, pending_count))
 
-        overall = health.node_overall([r.status for r in results], settled)
+            overall = health.node_overall([r.status for r in results], settled)
 
-        # Name what dragged the node down, so the UI can say "Degraded -
-        # capacity, thermal" instead of just "Degraded". `basis` means WHY
-        # everywhere else in this table; the overall row is no exception.
-        culprits = sorted(name for name, i in settled.items()
-                          if i.state in (health.WATCH, health.WARN))
-        blind = sorted(r.domain for r in results if r.status != 'ok')
-        why = ', '.join(culprits or blind) or 'all clear'
+            # Name what dragged the node down, so the UI can say "Degraded -
+            # capacity, thermal" instead of just "Degraded". `basis` means WHY
+            # everywhere else in this table; the overall row is no exception.
+            culprits = sorted(name for name, i in settled.items()
+                              if i.state in (health.WATCH, health.WARN))
+            blind = sorted(r.domain for r in results if r.status != 'ok')
+            why = ', '.join(culprits or blind) or 'all clear'
 
-        with self._lock:
             for name, state, value, basis, pending_state, pending_count in rows:
                 store.upsert_health(self.conn, node_id, name, state, value=value,
                                     basis=basis, pending_state=pending_state,

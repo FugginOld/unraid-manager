@@ -1,3 +1,4 @@
+import os
 import tempfile
 import unittest
 
@@ -22,14 +23,61 @@ class TestSchema(HealthCase):
         self.assertEqual(0, self.conn.execute(
             'SELECT COUNT(*) FROM node_health').fetchone()[0])
 
-    def test_the_schema_version_moved_to_two(self):
-        self.assertEqual(2, self.conn.execute('PRAGMA user_version').fetchone()[0])
+    def test_the_schema_version_moved_to_three(self):
+        # 2 -> 3 for the migration hook (widened CHECK); see TestMigration below.
+        self.assertEqual(3, self.conn.execute('PRAGMA user_version').fetchone()[0])
 
     def test_an_invalid_state_is_refused_by_the_database(self):
         import sqlite3
         with self.assertRaises(sqlite3.IntegrityError):
             self.conn.execute("INSERT INTO node_health(node_id,indicator,state,updated_at) "
                               "VALUES('a1b2','capacity','purple','x')")
+
+
+class TestMigration(unittest.TestCase):
+    """The one thing CREATE TABLE IF NOT EXISTS cannot do."""
+
+    def test_a_narrow_check_from_an_older_version_is_widened(self):
+        import sqlite3
+        directory = tempfile.mkdtemp()
+        path = os.path.join(directory, store.DB_FILENAME)
+        old = sqlite3.connect(path)
+        old.executescript(
+            "CREATE TABLE node_health(node_id TEXT NOT NULL, indicator TEXT NOT NULL,"
+            " state TEXT NOT NULL CHECK(state IN ('ok','watch','warn','unknown')),"
+            " value REAL, basis TEXT, pending_state TEXT,"
+            " pending_count INTEGER NOT NULL DEFAULT 0, since TEXT,"
+            " updated_at TEXT NOT NULL, PRIMARY KEY(node_id, indicator));"
+            "PRAGMA user_version=2;")
+        old.commit()
+        old.close()
+
+        conn = store.connect(directory)
+        store.sync_registry(conn, [NODE])
+        # Would raise IntegrityError against the old constraint.
+        store.upsert_health(conn, 'a1b2', 'overall', 'degraded', basis='capacity')
+        self.assertEqual('degraded', store.read_health(conn, 'a1b2')['overall']['state'])
+        self.assertEqual(store.SCHEMA_VERSION,
+                         conn.execute('PRAGMA user_version').fetchone()[0])
+        conn.close()
+
+    def test_history_is_never_dropped_by_a_migration(self):
+        # node_state, samples and events are not derived. Losing them to an
+        # upgrade would throw away everything the fleet has ever recorded.
+        directory = tempfile.mkdtemp()
+        conn = store.connect(directory)
+        store.sync_registry(conn, [NODE])
+        store.add_samples(conn, 'a1b2', [('cpu.percent', 4.0)], ts='2026-08-27T00:00:00Z')
+        store.log_event(conn, 'daemon', 'started')
+        conn.execute('PRAGMA user_version=2')
+        conn.commit()
+        conn.close()
+
+        conn = store.connect(directory)
+        self.assertEqual(1, conn.execute('SELECT COUNT(*) FROM samples').fetchone()[0])
+        self.assertEqual(1, conn.execute('SELECT COUNT(*) FROM events').fetchone()[0])
+        self.assertEqual(1, conn.execute('SELECT COUNT(*) FROM nodes').fetchone()[0])
+        conn.close()
 
 
 class TestUpsert(HealthCase):

@@ -24,6 +24,16 @@ check('an empty session fails',          um_session_ok([]) === false);
 check('a session with no user fails',    um_session_ok(['unraid_login' => 1234567]) === false);
 check('an empty username fails',         um_session_ok(['unraid_login' => 1, 'unraid_user' => '']) === false);
 
+/* The gate reads the session through um_session(), which must START one: an
+   endpoint under /plugins/ is not rendered by emhttp's dispatcher and has an
+   empty $_SESSION otherwise, so every request 401s. Observed on Raven. CLI has
+   no session cookie, so this is a source assertion plus a behaviour check that
+   the cookie-less case is a clean empty array rather than a warning. */
+check('the session is started, not assumed', str_contains($common_src, 'session_start()'));
+check('the session lock is released at once', str_contains($common_src, 'session_write_close()'));
+check('no cookie means no session, not a fatal', um_session() === []);
+check('an unstarted session fails the gate', um_session_ok(um_session()) === false);
+
 /* ── the CSRF gate ────────────────────────────────────────────────────────── */
 $var = ['csrf_token' => 'abc123'];
 check('matching csrf passes',            um_csrf_ok(['csrf_token' => 'abc123'], $var));

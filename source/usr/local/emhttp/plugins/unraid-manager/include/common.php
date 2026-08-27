@@ -30,6 +30,25 @@ function um_session_ok(array $session): bool {
     return !empty($session['unraid_login']) && !empty($session['unraid_user']);
 }
 
+function um_session(): array {
+    /* A .page is rendered by emhttp's dispatcher, which has already started the
+       session. A standalone endpoint under /plugins/ has NOT — $_SESSION is
+       simply empty there, so every request 401s no matter who is logged in.
+       Found on Raven during the P0 live trial.
+
+       Copied from Unraid's own auth-request.php: only touch the session when a
+       session cookie exists (no cookie, no session to read), and close it
+       immediately — a held session lock serialises every concurrent API call
+       behind whichever one got there first, and this page fires several at
+       once. */
+    if (session_status() === PHP_SESSION_ACTIVE) return $_SESSION ?? [];
+    if (!isset($_COOKIE[session_name()])) return [];
+    session_start();
+    $session = $_SESSION ?? [];
+    session_write_close();
+    return $session;
+}
+
 function um_csrf_ok(array $post, array $var): bool {
     $server = (string) ($var['csrf_token'] ?? '');
     $given  = (string) ($post['csrf_token'] ?? '');
@@ -48,7 +67,7 @@ function um_json($data, int $code = 200): void {
 }
 
 function um_require_session(): void {
-    if (!um_session_ok($_SESSION ?? [])) um_json(['error' => 'not authenticated'], 401);
+    if (!um_session_ok(um_session())) um_json(['error' => 'not authenticated'], 401);
 }
 
 function um_require_csrf(array $post): void {

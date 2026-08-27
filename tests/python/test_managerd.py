@@ -247,6 +247,21 @@ class TestNchanEndpoint(unittest.TestCase):
     def test_finds_the_publisher_socket(self):
         self.assertEqual('/var/run/nginx-pub.sock', managerd.nchan_endpoint(self.CONF))
 
+    RAVEN_CONF = """
+    server {
+        listen unix:/var/run/nginx.socket default_server;
+        location ~ /pub/(.*)$ {
+            nchan_publisher;
+        }
+    }
+    """
+
+    def test_finds_it_with_trailing_directives_on_the_listen_line(self):
+        # Verbatim shape from Raven's /etc/nginx/conf.d/servers.conf. The path
+        # ends at a space here, not at the semicolon, which is what broke
+        # discovery on the live box while nchan was sitting right there.
+        self.assertEqual('/var/run/nginx.socket', managerd.nchan_endpoint(self.RAVEN_CONF))
+
     def test_absent_publisher_returns_none(self):
         self.assertIsNone(managerd.nchan_endpoint('server { listen 80; }'))
 

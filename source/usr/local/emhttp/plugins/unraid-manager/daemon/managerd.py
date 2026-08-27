@@ -172,7 +172,11 @@ def nchan_endpoint(servers_conf_text):
         return None
     if 'nchan_publisher' not in servers_conf_text:
         return None
-    match = re.search(r'listen\s+unix:(\S+?);', servers_conf_text)
+    # The path ends at whitespace OR the semicolon: Unraid's real line is
+    # `listen unix:/var/run/nginx.socket default_server;`, and a pattern
+    # anchored on `;` matches nothing there. Cost a live box its live
+    # updates on Raven while nchan was sitting right in servers.conf.
+    match = re.search(r'listen\s+unix:([^\s;]+)', servers_conf_text)
     return match.group(1) if match else None
 
 

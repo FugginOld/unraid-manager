@@ -153,6 +153,16 @@ class TestOtherFastParsers(unittest.TestCase):
         self.assertEqual(0, out['last']['errors'])
         self.assertFalse(out['running'])
 
+    def test_the_parity_query_does_not_ask_for_errors(self):
+        # Golem holds a history row whose error count overflows the API's Int32
+        # and poisons the whole response. parityHistory takes no arguments, so
+        # not asking is the only way past it.
+        self.assertNotIn('errors', collector.DOMAINS['parity'].query)
+
+    def test_an_absent_error_count_is_unknown_not_zero(self):
+        out = collector.parse_parity({'parityHistory': [{'date': 'x', 'status': 'COMPLETED'}]})
+        self.assertIsNone(out['last']['errors'])
+
     def test_parity_never_run_has_no_last(self):
         out = collector.parse_parity({'parityHistory': []})
         self.assertIsNone(out['last'])

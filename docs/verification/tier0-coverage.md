@@ -123,4 +123,13 @@ seed fixtures were found to encode shapes the API cannot return.
 ## Still open
 
 - `smart/` directory contents/format (inspect when building Tier 1 M4).
+14. **`ParityCheck.errors` can exceed the API's own `Int` type.** Golem's
+    `parityHistory` row 46 reads `2441379360`; asking for that field makes the
+    API answer the ENTIRE query with `Int cannot represent non 32-bit signed
+    integer value` and `INTERNAL_SERVER_ERROR`, so one 2024 row costs the parity
+    domain permanently. `parityHistory` takes no arguments, so the newest row
+    cannot be requested on its own. The collector does not select `errors`; its
+    parser still reads it where a box returns it, and reports `None` — unknown,
+    never zero — where it does not. Verified live 2026-08-26 against Golem.
+
 - Raven's `disks` 504 root cause (box-side issue, not a blocker).

@@ -38,7 +38,9 @@ QUERIES = {
     'shares': '{ shares { name free used size floor include exclude } }',
     'notifications': '{ notifications { overview { unread { info warning alert total } } } }',
     'metrics': '{ metrics { cpu { percentTotal } memory { total used free percentTotal } } }',
-    'parity': ('{ parityHistory { date duration speed status errors progress '
+    # errors is omitted here for the same reason as in collector.py: it is an
+    # Int32 the API cannot serialise on Golem. Keep these two in step.
+    'parity': ('{ parityHistory { date duration speed status progress '
                'correcting paused running } }'),
     'disks': ('{ disks { device name vendor size temperature smartStatus interfaceType serialNum } '
               'assignableDisks { device name vendor size temperature smartStatus interfaceType serialNum } }'),

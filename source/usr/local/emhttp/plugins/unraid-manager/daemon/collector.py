@@ -151,7 +151,9 @@ def parse_parity(data):
     return {
         'last': None if latest is None else {
             'date': latest.get('date'), 'status': latest.get('status'),
-            'errors': _int(latest.get('errors')), 'duration': _int(latest.get('duration')),
+            # None when the field was not returned - unknown, not "no errors".
+            'errors': None if latest.get('errors') is None else _int(latest.get('errors')),
+            'duration': _int(latest.get('duration')),
             'speed': latest.get('speed'), 'correcting': latest.get('correcting')},
         'running': None,
         'paused': None,
@@ -203,7 +205,17 @@ for _d in [
             '{ metrics { cpu { percentTotal } memory { total used free percentTotal } } }',
             parse_metrics),
     _domain('parity', FAST,
-            '{ parityHistory { date duration speed status errors progress '
+            # `errors` is deliberately NOT requested. It is typed Int (32-bit)
+            # and Golem holds a history row reading 2441379360, which the API
+            # cannot serialise: it answers the whole query with "Int cannot
+            # represent non 32-bit signed integer value" and one bad row from
+            # 2024 costs the parity domain forever. parityHistory takes no
+            # arguments, so there is no way to ask for only the newest row.
+            # Observed live 2026-08-26; the parser still reads the field where a
+            # box does return it.
+            # ponytail: field dropped to dodge an API-side Int32 overflow.
+            # Revisit if Unraid widens the type.
+            '{ parityHistory { date duration speed status progress '
             'correcting paused running } }', parse_parity),
 ]:
     DOMAINS[_d.name] = _d

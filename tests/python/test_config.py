@@ -25,7 +25,9 @@ class TestManagerCfg(unittest.TestCase):
 
     def test_missing_file_is_defaults(self):
         cfg = config.read_manager_cfg(os.path.join(self.dir, 'nope.cfg'))
-        self.assertEqual(config.MANAGER_DEFAULTS, cfg)
+        self.assertEqual({'db_path': '', 'poll_fast': 30, 'poll_slow': 600,
+                          'capacity_high_water': 90, 'temp_warn': 50,
+                          'temp_crit': 60, 'error_window_min': 15}, cfg)
 
     def test_junk_value_falls_back_to_default(self):
         p = self.write('manager.cfg', 'db_path=/mnt/x\npoll_fast=banana\n')
@@ -136,6 +138,15 @@ class TestThresholds(unittest.TestCase):
         cfg = config.read_manager_cfg(self.write('db_path=/x\ntemp_warn=70\ntemp_crit=40\n'))
         self.assertEqual(50, cfg['temp_warn'])
         self.assertEqual(60, cfg['temp_crit'])
+
+    def test_every_bound_is_enforced_not_just_the_first(self):
+        # Deleting the bounds loop must fail more than one assertion, or three
+        # of the four keys are unprotected.
+        cfg = config.read_manager_cfg(self.write(
+            'db_path=/x\ntemp_warn=1\ntemp_crit=500\nerror_window_min=99999\n'))
+        self.assertEqual(50, cfg['temp_warn'])
+        self.assertEqual(60, cfg['temp_crit'])
+        self.assertEqual(15, cfg['error_window_min'])
 
     def test_the_defaults_match_the_health_engine(self):
         # Duplicated deliberately - config must not import health - so assert

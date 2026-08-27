@@ -8,20 +8,9 @@
       "Bash(git rev-parse:*)",
       "Bash(git blame:*)",
       "Bash(git cat-file:*)",
-      "Bash(cat:*)",
-      "Bash(head:*)",
-      "Bash(tail:*)",
-      "Bash(sed -n:*)",
-      "Bash(wc:*)",
-      "Bash(ls:*)",
-      "Bash(find:*)",
-      "Bash(grep:*)",
-      "Bash(rg:*)",
-      "Bash(awk:*)",
-      "Bash(diff:*)",
-      "Bash(python -m unittest:*)",
-      "Bash(php:*)",
-      "Bash(bash tests/php/run.sh)"
+      "Bash(python -m unittest discover -s tests/python:*)",
+      "Bash(bash tests/php/run.sh)",
+      "Bash(php -l:*)"
     ]
   }
 }

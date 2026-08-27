@@ -1,0 +1,27 @@
+Menu="Tasks:95"
+Type="xmenu"
+Title="Fleet"
+Icon="icon.png"
+---
+<?PHP
+/* The Fleet tab: every enrolled node, its rolled-up state, and how long ago we
+   last heard from it. Read-only — P0 cannot change anything on a peer. */
+?>
+<link rel="stylesheet" href="/plugins/unraid-manager/unraid-manager.css">
+
+<div id="um-fleet">
+  <div id="um-stale" class="um-stale" hidden></div>
+  <p id="um-summary">Loading fleet…</p>
+  <table class="tablesorter" id="um-fleet-table">
+    <thead>
+      <tr>
+        <th>Node</th><th>State</th><th>Array</th><th>Capacity</th>
+        <th>Unraid / API</th><th>Notifications</th><th>Last seen</th>
+      </tr>
+    </thead>
+    <tbody id="um-fleet-rows"><tr><td colspan="7">Loading…</td></tr></tbody>
+  </table>
+  <div id="um-detail"></div>
+</div>
+
+<script src="/plugins/unraid-manager/fleet.js"></script>

@@ -49,5 +49,36 @@ check('per-node test button present', str_contains($sjs, "action: 'test'"));
 check('the per-node test sends no key',
       !preg_match("/action: 'test'[^}]*key/", $sjs));
 
+/* ── the Fleet tab ────────────────────────────────────────────────────────── */
+$fleet = (string) @file_get_contents($base . '/UnraidManager.page');
+$fjs   = (string) @file_get_contents($base . '/fleet.js');
+
+check('fleet page exists', $fleet !== '');
+/* Verified on the live box: a top-level tab is Type="xmenu", ordered by
+   Menu="Tasks:NN". */
+check('fleet page is a top-level xmenu tab', (bool) preg_match('/^Type="xmenu"/m', $fleet));
+check('fleet page is ordered under Tasks', (bool) preg_match('/^Menu="Tasks:\d+"/m', $fleet));
+check('fleet page has a Title', (bool) preg_match('/^Title=/m', $fleet));
+check('fleet page loads its javascript', str_contains($fleet, 'fleet.js'));
+
+check('fleet js exists', $fjs !== '');
+check('subscribes to the nchan channel', str_contains($fjs, '/sub/unraid-manager'));
+check('uses EventSource', str_contains($fjs, 'EventSource'));
+check('has a polling fallback', str_contains($fjs, '30000'));
+check('has a three-minute stale threshold', str_contains($fjs, '180000'));
+/* Constraint 5 in the UI: three separable states, each carrying a WORD and not
+   only a colour. */
+check('has a state label map', str_contains($fjs, 'STATE_LABEL'));
+foreach (['OK', 'Degraded', 'Unknown'] as $word) {
+    check("labels the $word state in words", str_contains($fjs, $word));
+}
+check('empty array is labelled, not shown as 0%', str_contains($fjs, 'empty array'));
+/* The fleet page reads; it never carries a credential. (A bare "key" substring
+   would match Object.keys, so assert the two shapes that would actually leak
+   one: a query parameter and a posted field.) */
+check('the fleet page never puts a key in a url', !preg_match('/[?&]key=/', $fjs));
+check('the fleet page never posts a key field', !preg_match('/\bkey\s*:/', $fjs));
+check('fleet page has no submitting form', !preg_match('/<form[^>]*\baction=/i', $fleet));
+
 echo $fails === 0 ? "pages: all pass\n" : "pages: $fails FAILED\n";
 exit($fails === 0 ? 0 : 1);

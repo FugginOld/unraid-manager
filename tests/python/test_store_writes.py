@@ -1,5 +1,6 @@
 import json
 import tempfile
+import threading
 import unittest
 
 import context  # noqa: F401
@@ -14,6 +15,19 @@ RAVEN = {'id': 'b2c3', 'name': 'Raven', 'address': '192.168.2.19', 'port': 29220
 class StoreCase(unittest.TestCase):
     def setUp(self):
         self.conn = store.connect(tempfile.mkdtemp())
+
+    def test_the_connection_is_usable_from_another_thread(self):
+        # The daemon polls on a worker pool and answers the control socket on a
+        # listener thread. sqlite3's default refuses any use off the creating
+        # thread, which broke every poll and every status call on Raven.
+        seen = []
+        worker = threading.Thread(target=lambda: seen.append(
+            self.conn.execute('SELECT COUNT(*) FROM nodes').fetchone()[0]))
+        worker.start()
+        worker.join()
+        # The row count is irrelevant (subclasses seed nodes); what is asserted
+        # is that the query RAN off-thread instead of raising ProgrammingError.
+        self.assertEqual(1, len(seen), 'the connection must cross threads')
 
     def tearDown(self):
         self.conn.close()

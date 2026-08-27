@@ -76,7 +76,16 @@ def connect(db_dir):
     """Open (creating if needed) the manager database under db_dir."""
     db_dir = validate_db_path(db_dir)
     os.makedirs(db_dir, exist_ok=True)
-    conn = sqlite3.connect(os.path.join(db_dir, DB_FILENAME), timeout=30.0)
+    # check_same_thread=False because the daemon uses one connection from three
+    # places: the main tick loop, a worker pool of eight, and the control
+    # socket's listener thread. sqlite3 otherwise refuses any use off the
+    # creating thread outright - observed on Raven, where the first status
+    # call raised ProgrammingError and every poll would have done the same.
+    # Serialisation is Manager._lock's job, and that is not optional: this
+    # flag removes the interpreter's guard, it does not make the connection
+    # safe to share unsynchronised.
+    conn = sqlite3.connect(os.path.join(db_dir, DB_FILENAME), timeout=30.0,
+                           check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute('PRAGMA journal_mode=WAL')
     conn.execute('PRAGMA foreign_keys=ON')

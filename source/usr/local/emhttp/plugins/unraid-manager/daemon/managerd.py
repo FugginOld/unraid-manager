@@ -224,7 +224,11 @@ class Manager(object):
         return config.read_key(self.keys_dir, node_id)
 
     def _node(self, node_id):
-        row = self.conn.execute('SELECT * FROM nodes WHERE id=?', (node_id,)).fetchone()
+        # Called from a worker thread. check_same_thread is off on this
+        # connection, so the lock is the only thing keeping a read off a
+        # concurrent write - it is not optional.
+        with self._lock:
+            row = self.conn.execute('SELECT * FROM nodes WHERE id=?', (node_id,)).fetchone()
         return dict(row) if row else None
 
     def reload(self):
@@ -328,7 +332,10 @@ class Manager(object):
             log.exception('cycle failed for %s/%s', node_id, lane)
 
     def status(self):
-        rows = self.conn.execute('SELECT id,name,last_seen FROM nodes ORDER BY name').fetchall()
+        # Answered on the control socket's listener thread.
+        with self._lock:
+            rows = self.conn.execute(
+                'SELECT id,name,last_seen FROM nodes ORDER BY name').fetchall()
         return {
             'uptime': int(time.time() - self.started_at),
             'publishing': self.publishing,
@@ -361,13 +368,20 @@ class Manager(object):
             address, port, key = args['address'], args['port'], args.get('key')
         return collector.probe(self.post_fn, address, int(port), key)
 
+    def _prune(self, args):
+        # Also the listener thread. A VACUUM can hold this for minutes and will
+        # stall the poll loop behind it; that is the right trade for a single
+        # writer, and it runs from cron at 04:17 on a Sunday.
+        with self._lock:
+            return store.prune(self.conn, vacuum=bool(args.get('vacuum')))
+
     def handlers(self):
         return {
             'status': lambda args: self.status(),
             'reload': lambda args: self.reload(),
             'poll_now': lambda args: {
                 'scheduled': self.scheduler.poll_now(args.get('node_id')) or True},
-            'prune': lambda args: store.prune(self.conn, vacuum=bool(args.get('vacuum'))),
+            'prune': self._prune,
             'test_node': self._test_node,
         }
 

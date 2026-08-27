@@ -1,6 +1,7 @@
 import logging
 import os
 import tempfile
+import threading
 import unittest
 
 import context
@@ -171,6 +172,28 @@ class TestRunCycle(ManagerCase):
         fails = self.conn.execute(
             "SELECT COUNT(*) FROM events WHERE kind='poll_fail'").fetchone()[0]
         self.assertEqual(1, fails, 'a node down for an hour must not write 120 journal rows')
+
+
+class TestThreading(ManagerCase):
+    def test_a_cycle_and_a_status_call_can_run_on_different_threads(self):
+        # The pool polls, the control socket answers, and both go through one
+        # sqlite connection. On Raven the first status call raised
+        # ProgrammingError and every poll would have done the same.
+        m = self.manager()
+        errors = []
+
+        def poll():
+            try:
+                m.run_cycle('a1b2', collector.FAST, 1000.0)
+            except Exception as exc:            # noqa: BLE001 - the point of the test
+                errors.append(exc)
+
+        worker = threading.Thread(target=poll)
+        worker.start()
+        worker.join()
+        self.assertEqual([], errors)
+        self.assertEqual(1, len(m.status()['nodes']))
+        self.assertEqual('ok', self.state('info')['status'])
 
 
 class TestPublish(ManagerCase):

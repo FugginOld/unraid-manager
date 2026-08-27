@@ -32,6 +32,13 @@ fi
 test -d "$PLUGDIR" || { echo "ERROR: $PLUGDIR missing"; exit 1; }
 test -f "$PLUGDIR/scripts/rc.unraid-manager" || echo "WARN: rc script not present yet"
 
+# Bytecode is not source. Running the suite leaves __pycache__ under source/,
+# and everything under source/ ships - so a build after a local test run puts
+# this machine's 3.13 .pyc files on a 3.11 box. Harmless (Python ignores a
+# mismatched magic number) and still wrong: it is not what was reviewed.
+find source -name '__pycache__' -type d -prune -exec rm -rf {} + 2>/dev/null
+find source -name '*.pyc' -delete 2>/dev/null
+
 mkdir -p releases
 echo "--> Building $OUTPUT..."
 cd source

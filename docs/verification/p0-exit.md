@@ -80,12 +80,17 @@ between is `degraded`. Still fail-closed — never `ok` while a domain is blind.
 - **The tab is labelled "UnraidManager"**, from the filename. `Title="Fleet"`
   only sets the page heading; the top-bar label comes from `Name=`. Accepted by
   the operator; one line to change if wanted.
-- **`Code="f0e8"` is a guess** at Unraid's subsetted icon font. It renders; if it
-  ever shows an empty box, swap for a codepoint observed on the box.
+- **`Code="f0e8"`** was a guess at Unraid's subsetted icon font. Confirmed
+  rendering on Raven — closed. If a future Unraid ever shows an empty box there,
+  swap for a codepoint observed on that box.
 - **The 504 root cause on either box.** A box-side investigation, not a plugin
   change.
 - **`SLOW_TIMEOUT = 90`** stays, though nginx's 60s is the real ceiling. Harmless,
   and correct if the endpoint is ever reached without nginx in front.
+- **Found while writing the docs, fixed after the trial:** `build.sh` packaged
+  whatever `__pycache__` a local test run had left under `source/`, putting this
+  machine's 3.13 bytecode in a package destined for 3.11. Not fatal — Python
+  ignores a mismatched magic number — but not what was reviewed either.
 
 ## What this milestone actually demonstrated
 

@@ -35,5 +35,11 @@ $plugdir = $root . '/source/usr/local/emhttp/plugins/unraid-manager';
 check('plugin dir at the emhttp path', is_dir($plugdir));
 check('icon.png present', is_file($plugdir . '/icon.png'));
 
+/* Everything under source/ ships. A build run after the python suite would
+   otherwise package this machine's .pyc files and put 3.13 bytecode on a 3.11
+   box - not fatal, just not what was reviewed. */
+check('the build purges bytecode before packaging',
+      str_contains($sh, "-name '__pycache__'") && str_contains($sh, "-name '*.pyc' -delete"));
+
 echo $fails === 0 ? "build: all pass\n" : "build: $fails FAILED\n";
 exit($fails === 0 ? 0 : 1);

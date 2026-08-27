@@ -90,6 +90,15 @@ def parse_array(data):
         elif pools:
             pools[-1]['members'] += 1
 
+    # Slim per-disk rows. array.disks is the ONLY source of slot and error
+    # counters - Query.disks enumerates hardware and knows neither - and the
+    # fleet disk table joins the two on device name. Kept to six fields
+    # because this payload is stored as JSON on every poll.
+    disk_rows = [{'slot': d.get('name'), 'device': d.get('device'),
+                  'temp': d.get('temp'), 'numErrors': _int(d.get('numErrors')),
+                  'status': d.get('status'), 'size': _int(d.get('size'))}
+                 for d in disks]
+
     return {
         'state': array.get('state'),
         'empty': empty,
@@ -97,6 +106,7 @@ def parse_array(data):
         'slots': {'free': _int(slots.get('free')), 'used': _int(slots.get('used')),
                   'total': _int(slots.get('total'))},
         'disk_count': len(disks),
+        'disks': disk_rows,
         'parity_count': len(parities),
         'errors_total': sum(_int(d.get('numErrors')) for d in list(disks) + list(parities)),
         'temp_max': max(temps) if temps else None,
@@ -167,7 +177,9 @@ def _samples_for(domain_name, payload):
     """Numeric series worth keeping, as (metric, value) pairs."""
     if domain_name == 'array':
         rows = [('array.bytes_used', payload['capacity']['used']),
-                ('array.bytes_total', payload['capacity']['total'])]
+                ('array.bytes_total', payload['capacity']['total']),
+                # health.evaluate_disk_errors has no history without this.
+                ('array.errors_total', payload['errors_total'])]
         if payload['temp_max'] is not None:
             rows.append(('array.temp_max', payload['temp_max']))
         for pool in payload['pools']:

@@ -99,8 +99,14 @@ function um_platform_csrf_enforced(): bool {
        presence is positive proof the prepend executed in this process — which
        means any POST that reached us passed the platform's check. Found on
        Raven during the P0 live trial, where re-checking a consumed token made
-       every POST a 403. */
-    return function_exists('csrf_terminate');
+       every POST a 403.
+
+       The method test is not redundant. The prepend DEFINES csrf_terminate on
+       every request but only VALIDATES on POST, so proof it ran is not proof
+       it checked anything — without this clause the gate would pass anything
+       that reached it over GET. No mutation route is reachable that way today;
+       the clause is what keeps that true after the next refactor. */
+    return function_exists('csrf_terminate') && ($_SERVER['REQUEST_METHOD'] ?? '') === 'POST';
 }
 
 function um_require_csrf(array $post): void {

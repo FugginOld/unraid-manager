@@ -67,6 +67,13 @@ check('an unreadable var.ini refuses rather than passes',
 check('no token and no platform gate is a refusal',
       um_csrf_ok([], um_var()) === false && !function_exists('csrf_terminate'));
 if (!function_exists('csrf_terminate')) { function csrf_terminate($reason) { exit(1); } }
+/* The prepend defines csrf_terminate on EVERY request but only validates on
+   POST, so its presence alone must not open the gate over another method. */
+$_SERVER['REQUEST_METHOD'] = 'GET';
+check('the platform gate is not credited on a method it never checked',
+      um_platform_csrf_enforced() === false);
+$_SERVER['REQUEST_METHOD'] = 'POST';
+check('the platform gate counts on a post', um_platform_csrf_enforced() === true);
 um_require_csrf([]);   /* must RETURN; if it refuses, this file exits and fails */
 check('a consumed token is accepted when the platform gate has run', true);
 

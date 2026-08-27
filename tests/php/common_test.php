@@ -44,6 +44,20 @@ check('empty csrf fails',                um_csrf_ok(['csrf_token' => ''], $var) 
 check('no server token fails closed',    um_csrf_ok(['csrf_token' => 'abc123'], []) === false);
 check('empty server token fails closed', um_csrf_ok(['csrf_token' => ''], ['csrf_token' => '']) === false);
 
+/* The server's own token comes from emhttp's var.ini when $var is absent — it
+   is absent in every standalone endpoint, which made every POST a 403 on Raven.
+   var.ini does not exist on this dev machine, so the behaviour asserted here is
+   the fail-closed one; the live path is exercised by the box. */
+check('the server token is read from var.ini', str_contains($common_src, "parse_ini_file(UM_VAR_INI)"));
+check('a globally supplied $var still wins', (function () {
+    $GLOBALS['var'] = ['csrf_token' => 'from-emhttp'];
+    $ok = um_var()['csrf_token'] === 'from-emhttp';
+    unset($GLOBALS['var']);
+    return $ok;
+})());
+check('an unreadable var.ini refuses rather than passes',
+      um_csrf_ok(['csrf_token' => 'anything'], um_var()) === false);
+
 /* ── db_path validation, the same rule the daemon enforces ────────────────── */
 check('a pool path is valid',            um_valid_db_path('/mnt/user/appdata/unraid-manager'));
 check('a cache path is valid',           um_valid_db_path('/mnt/cache/unraid-manager'));

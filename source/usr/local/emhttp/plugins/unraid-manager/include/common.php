@@ -70,9 +70,25 @@ function um_require_session(): void {
     if (!um_session_ok(um_session())) um_json(['error' => 'not authenticated'], 401);
 }
 
-function um_require_csrf(array $post): void {
+const UM_VAR_INI = '/var/local/emhttp/var.ini';
+
+function um_var(): array {
+    /* Same shape of problem as um_session(): emhttp's dispatcher hands a .page
+       its $var, and a standalone endpoint under /plugins/ gets nothing — so the
+       SERVER's token reads as empty and every POST is refused as invalid CSRF
+       even though the browser sent the right one. Read it from the file emhttp
+       writes it to. Found on Raven during the P0 live trial.
+
+       Still fails closed: an unreadable var.ini yields no token, and
+       um_csrf_ok() refuses when the server side is empty. */
     global $var;
-    if (!um_csrf_ok($post, is_array($var ?? null) ? $var : [])) {
+    if (is_array($var ?? null) && !empty($var['csrf_token'])) return $var;
+    $ini = @parse_ini_file(UM_VAR_INI);
+    return is_array($ini) ? $ini : [];
+}
+
+function um_require_csrf(array $post): void {
+    if (!um_csrf_ok($post, um_var())) {
         um_json(['error' => 'invalid csrf token'], 403);
     }
 }

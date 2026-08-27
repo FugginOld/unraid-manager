@@ -53,7 +53,7 @@ The architecture must respect these. Several are load-bearing constraints, not p
 | emhttp fires event scripts (`started`, `stopping_svcs`, `disks_mounted`, `unmounting_disks`) into `plugins/<name>/event/` | Clean lifecycle hooks for daemon start/stop and safe-unmount ordering. |
 | Cron via `/boot/config/plugins/<name>/<name>.cron` + `update_cron` | Scheduled jobs use the platform scheduler, not a bespoke timer loop. |
 | Notifications via `/usr/local/emhttp/webGui/scripts/notify` | Fleet alerts can surface in the native notification bell as well as in Unraid-Manager's own bus. |
-| POSTs require `$var['csrf_token']` | Every action endpoint validates CSRF. Non-negotiable. |
+| POSTs require `$var['csrf_token']` | Every action endpoint validates CSRF. Non-negotiable. **Verified on Raven 2026-08-26:** `webGui/include/local_prepend.php` runs via `auto_prepend_file` on every request and enforces this itself on POST — it terminates a missing or wrong token and then `unset($_POST['csrf_token'])`, so endpoint code never sees the field. An endpoint's job is to confirm that gate ran (`function_exists('csrf_terminate')`), not to re-check a consumed token. |
 
 ---
 

@@ -58,6 +58,18 @@ check('a globally supplied $var still wins', (function () {
 check('an unreadable var.ini refuses rather than passes',
       um_csrf_ok(['csrf_token' => 'anything'], um_var()) === false);
 
+/* Unraid's local_prepend.php validates csrf_token on every POST and then
+   unsets it, so an endpoint is handed a POST with no token to re-check. A gate
+   that insisted on seeing one refused every write on the live box. These two
+   assert the platform path is accepted and that nothing else is.
+   Order matters: once the stub below exists, um_require_csrf always returns —
+   so the fail-closed case is asserted FIRST. */
+check('no token and no platform gate is a refusal',
+      um_csrf_ok([], um_var()) === false && !function_exists('csrf_terminate'));
+if (!function_exists('csrf_terminate')) { function csrf_terminate($reason) { exit(1); } }
+um_require_csrf([]);   /* must RETURN; if it refuses, this file exits and fails */
+check('a consumed token is accepted when the platform gate has run', true);
+
 /* ── db_path validation, the same rule the daemon enforces ────────────────── */
 check('a pool path is valid',            um_valid_db_path('/mnt/user/appdata/unraid-manager'));
 check('a cache path is valid',           um_valid_db_path('/mnt/cache/unraid-manager'));

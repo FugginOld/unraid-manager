@@ -87,10 +87,28 @@ function um_var(): array {
     return is_array($ini) ? $ini : [];
 }
 
+function um_platform_csrf_enforced(): bool {
+    /* Unraid runs webGui/include/local_prepend.php via auto_prepend_file on
+       EVERY request. On a POST it validates csrf_token against var.ini itself,
+       terminates the request outright if it is missing or wrong, and then
+       `unset($_POST['csrf_token'])`. So an endpoint never sees the token: by
+       the time our code runs the check has already happened and the evidence
+       has been deliberately removed.
+
+       csrf_terminate() is defined by that prepend and by nothing else, so its
+       presence is positive proof the prepend executed in this process — which
+       means any POST that reached us passed the platform's check. Found on
+       Raven during the P0 live trial, where re-checking a consumed token made
+       every POST a 403. */
+    return function_exists('csrf_terminate');
+}
+
 function um_require_csrf(array $post): void {
-    if (!um_csrf_ok($post, um_var())) {
-        um_json(['error' => 'invalid csrf token'], 403);
-    }
+    /* Our own check first: it still applies wherever the token survives to us.
+       Then the platform's. Neither holding is a refusal — this fails closed. */
+    if (um_csrf_ok($post, um_var())) return;
+    if (um_platform_csrf_enforced()) return;
+    um_json(['error' => 'invalid csrf token'], 403);
 }
 
 /* ── paths and identity ───────────────────────────────────────────────────── */

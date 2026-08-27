@@ -16,7 +16,7 @@ function check(string $name, bool $ok): void {
 $db = new SQLite3(':memory:');
 $db->enableExceptions(true);
 $db->exec('CREATE TABLE nodes(id TEXT PRIMARY KEY, name TEXT, address TEXT, port INTEGER,
-           tier INTEGER, enabled INTEGER, added_at TEXT, last_seen TEXT)');
+           tier INTEGER, enabled INTEGER, added_at TEXT, last_seen TEXT, api_key TEXT)');
 $db->exec('CREATE TABLE node_state(node_id TEXT, domain TEXT, status TEXT, error TEXT,
            fetched_at TEXT, payload TEXT, PRIMARY KEY(node_id, domain))');
 $db->exec('CREATE TABLE node_health(node_id TEXT, indicator TEXT, state TEXT, value REAL,
@@ -24,9 +24,9 @@ $db->exec('CREATE TABLE node_health(node_id TEXT, indicator TEXT, state TEXT, va
            updated_at TEXT, PRIMARY KEY(node_id, indicator))');
 
 $db->exec("INSERT INTO nodes VALUES('a1b2','Golem','192.168.2.248',15137,0,1,
-           '2026-08-27T09:00:00Z','2026-08-27T10:00:00Z')");
+           '2026-08-27T09:00:00Z','2026-08-27T10:00:00Z','SENTINEL-NOT-FOR-EXPORT')");
 $db->exec("INSERT INTO nodes VALUES('b2c3','Raven','192.168.2.19',29220,0,1,
-           '2026-08-27T09:00:00Z',NULL)");
+           '2026-08-27T09:00:00Z',NULL,'SENTINEL-NOT-FOR-EXPORT')");
 $info = json_encode(['hostname' => 'Golem', 'unraid' => '7.3.2', 'api' => '4.37.3',
                      'booted_at' => '2026-08-11T04:12:07.000Z']);
 $arr  = json_encode(['state' => 'STARTED', 'empty' => false,
@@ -65,10 +65,26 @@ check('the fleet summary counts the chips',
       && $out['fleet']['unknown'] === 1 && $out['fleet']['ok'] === 0);
 
 /* A node the daemon has never evaluated must not read as healthy. */
-$db->exec("INSERT INTO nodes VALUES('c3d4','New','10.0.0.9',80,0,1,'2026-08-27T11:00:00Z',NULL)");
+$db->exec("INSERT INTO nodes VALUES('c3d4','New','10.0.0.9',80,0,1,'2026-08-27T11:00:00Z',NULL,'SENTINEL-NOT-FOR-EXPORT')");
 $out = um_fleet_health($db);
 $byId = array_column($out['nodes'], null, 'id');
 check('a never-evaluated node is unknown, not ok', $byId['c3d4']['state'] === 'unknown');
+
+/* A known severity outside ok|degraded|unknown must roll up to degraded, not
+   read as "we cannot see this box". A genuinely unrecognised value still
+   fails closed to unknown. */
+$db->exec("INSERT INTO nodes VALUES('d4e5','Warn','10.0.0.10',80,0,1,
+           '2026-08-27T11:00:00Z',NULL,'SENTINEL-NOT-FOR-EXPORT')");
+$db->exec("INSERT INTO nodes VALUES('e5f6','Banana','10.0.0.11',80,0,1,
+           '2026-08-27T11:00:00Z',NULL,'SENTINEL-NOT-FOR-EXPORT')");
+$db->exec("INSERT INTO node_health VALUES('d4e5','overall','warn',NULL,'thermal',
+           NULL,0,'2026-08-27T06:00:00Z','2026-08-27T10:00:00Z')");
+$db->exec("INSERT INTO node_health VALUES('e5f6','overall','banana',NULL,'?',
+           NULL,0,'2026-08-27T06:00:00Z','2026-08-27T10:00:00Z')");
+$out = um_fleet_health($db);
+$byId = array_column($out['nodes'], null, 'id');
+check('a warn overall rolls up to degraded', $byId['d4e5']['state'] === 'degraded');
+check('an unrecognised overall value fails closed to unknown', $byId['e5f6']['state'] === 'unknown');
 
 check('a null db answers empty rather than fataling',
       um_fleet_health(null) === ['fleet' => ['nodes' => 0, 'ok' => 0, 'degraded' => 0,
@@ -76,7 +92,7 @@ check('a null db answers empty rather than fataling',
 
 $src = (string) file_get_contents($base . '/api/health.php');
 check('session gated', str_contains($src, 'um_require_session()'));
-check('no key can leave', !str_contains(json_encode($out), '"key"'));
+check('no key can leave', !str_contains(json_encode($out), 'SENTINEL-NOT-FOR-EXPORT'));
 
 echo $fails === 0 ? "health: all pass\n" : "health: $fails FAILED\n";
 exit($fails === 0 ? 0 : 1);

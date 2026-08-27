@@ -122,6 +122,11 @@
   /* ── probe and enroll ─────────────────────────────────────────────────── */
   var enrollBtn = document.getElementById('um-enroll');
   var enrollMsg = document.getElementById('um-enroll-msg');
+  /* The Name field promises "taken from the node if left blank", and the probe
+     is the only thing that knows what the node calls itself. Captured here so
+     enroll can keep that promise; the server's own fallback is the address,
+     which is what a fleet table full of IP addresses looks like. */
+  var probedHostname = null;
 
   function renderProbe(report) {
     var box = document.getElementById('um-probe-report');
@@ -168,6 +173,7 @@
     }).then(function (r) {
       if (!r.ok && r.error) { text(enrollMsg, r.error, 'bad'); return; }
       renderProbe(r);
+      probedHostname = (r.headline && r.headline.hostname) || null;
       /* Enroll only after the node has proven it can answer with this key.
          Partial counts: a read-scoped key that cannot see one domain is still
          a node worth watching, and the report says which. */
@@ -182,7 +188,7 @@
     text(enrollMsg, 'Enrolling…');
     post(NODES, {
       action: 'enroll',
-      name: document.getElementById('um-name').value,
+      name: document.getElementById('um-name').value || probedHostname || '',
       address: document.getElementById('um-address').value,
       port: document.getElementById('um-port').value,
       key: document.getElementById('um-key').value
@@ -193,6 +199,7 @@
       document.getElementById('um-key').value = '';
       document.getElementById('um-address').value = '';
       document.getElementById('um-name').value = '';
+      probedHostname = null;
       enrollBtn.disabled = true;
       document.getElementById('um-probe-report').textContent = '';
       loadNodes();

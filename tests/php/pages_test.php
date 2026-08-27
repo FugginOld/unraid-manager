@@ -38,6 +38,15 @@ check('the key field does not autocomplete', str_contains($settings, 'autocomple
 /* Native form submit is forbidden inside the webGUI shell (plan §10.1). */
 check('settings page has no submitting form', !preg_match('/<form[^>]*\baction=/i', $settings));
 
+/* The Name field says "taken from the node if left blank". The server's
+   fallback is the address, so the page has to supply the hostname the probe
+   reported or that text is a lie - Golem enrolled as 192.168.2.248 on the live
+   box before this. */
+check('a blank name falls back to the probed hostname',
+      str_contains($sjs, 'probedHostname'));
+check('the enroll post uses that fallback',
+      (bool) preg_match('/name:.*probedHostname/', $sjs));
+
 /* Spec §6: a daemon status line WITH start/stop, and a per-node test. */
 foreach (['start', 'stop', 'restart'] as $verb) {
     check("daemon $verb button present", str_contains($settings, 'um-daemon-' . $verb));

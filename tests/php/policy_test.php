@@ -115,9 +115,14 @@ check('absent: no mutation appears in any domain query',
       !preg_match('/\bmutation\b/i', $collector));
 check('absent: no introspection query',
       !str_contains($collector, '__schema') && !str_contains($collector, '__type'));
-check('absent: no PDO instantiation survives in the php layer',
-      !str_contains(php_code_only($common), 'new PDO(')
-      && !str_contains(php_code_only($nodes), 'new PDO('));
+/* Globbed, not named: a read path added after this pin (health.php was
+   exactly the kind of code that broke on php-fpm) must be covered without
+   anyone remembering to list it here. */
+$pdoLeak = false;
+foreach (array_merge([$plugin . '/include/common.php'], glob($plugin . '/api/*.php') ?: []) as $pdoFile) {
+    if (str_contains(php_code_only(src($pdoFile)), 'new PDO(')) $pdoLeak = true;
+}
+check('absent: no PDO instantiation survives in the php layer', !$pdoLeak);
 check('absent: no repo-level CLAUDE.md',
       !is_file($root . '/CLAUDE.md'));
 

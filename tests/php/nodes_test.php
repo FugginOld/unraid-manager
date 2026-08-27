@@ -17,8 +17,21 @@ function check(string $name, bool $ok): void {
 /* ── the three-value rollup ───────────────────────────────────────────────── */
 check('all ok is ok', um_rollup(['info' => ['status' => 'ok'], 'array' => ['status' => 'ok']]) === 'ok');
 check('one error is degraded', um_rollup(['info' => ['status' => 'ok'], 'array' => ['status' => 'error']]) === 'degraded');
-check('one unknown outranks an error', um_rollup(['info' => ['status' => 'unknown'], 'array' => ['status' => 'error']]) === 'unknown');
+/* A node is only unknown when NOTHING about it is readable. One unreadable
+   domain among many means we can see the node and part of it is broken, which
+   is degraded - Golem rendered as unreachable on Raven with nine live domains
+   and a current last_seen because the old rule let one slow query speak for the
+   whole box. */
+check('one unknown among readable domains is degraded',
+      um_rollup(['info' => ['status' => 'unknown'], 'array' => ['status' => 'error']]) === 'degraded');
+check('one unknown alongside ok is degraded, not unknown',
+      um_rollup(['info' => ['status' => 'ok'], 'disks' => ['status' => 'unknown']]) === 'degraded');
+check('every domain unknown is unknown',
+      um_rollup(['info' => ['status' => 'unknown'], 'array' => ['status' => 'unknown']]) === 'unknown');
 check('all unknown is unknown', um_rollup(['info' => ['status' => 'unknown']]) === 'unknown');
+check('a node is never green while a domain is unreadable',
+      um_rollup(['a' => ['status' => 'ok'], 'b' => ['status' => 'ok'],
+                 'c' => ['status' => 'unknown']]) !== 'ok');
 /* Constraint 5: nothing known yet is not health. A node enrolled ten seconds
    ago and never polled must not render green. */
 check('no domains at all is unknown', um_rollup([]) === 'unknown');

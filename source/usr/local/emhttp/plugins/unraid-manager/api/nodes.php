@@ -15,19 +15,27 @@
 
 require_once __DIR__ . '/../include/common.php';
 
-/* The P0 chip is three-valued, and unknown outranks error: "I cannot see it"
-   is a bigger fact than "one of its domains failed". Nothing known yet is
-   unknown too — a node enrolled a second ago must never render green.
-   Worst-of rollup with hysteresis is P1 (spec §8). */
+/* Three-valued, and fail-closed: a node is never green while something about it
+   is unreadable.
+   CORRECTED 2026-08-26 on Raven. The rule as first written - ANY domain unknown
+   makes the node unknown - contradicted this plan's own exit criterion, which
+   says one failing domain taking a whole node grey is a P0 defect. It showed up
+   immediately: Golem answered nine domains with a current last_seen and
+   rendered as unreachable because one slow-lane disks query did not return.
+   `unknown` at node level means WE CANNOT SEE THIS NODE, so it needs every
+   domain to be unreadable. Anything in between is degraded - visibly not-green,
+   without claiming the box is gone.
+   Worst-of rollup with hysteresis is P1 (spec section 8). */
 function um_rollup(array $domains): string {
     if (!$domains) return 'unknown';
-    $seen = [];
+    $counts = ['ok' => 0, 'error' => 0, 'unknown' => 0];
     foreach ($domains as $d) {
         $status = $d['status'] ?? 'unknown';
-        $seen[in_array($status, ['ok', 'error', 'unknown'], true) ? $status : 'unknown'] = true;
+        if (!isset($counts[$status])) $status = 'unknown';
+        $counts[$status]++;
     }
-    if (isset($seen['unknown'])) return 'unknown';
-    if (isset($seen['error'])) return 'degraded';
+    if ($counts['unknown'] === count($domains)) return 'unknown';
+    if ($counts['unknown'] || $counts['error']) return 'degraded';
     return 'ok';
 }
 

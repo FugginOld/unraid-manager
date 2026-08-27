@@ -25,7 +25,7 @@ class TestManagerCfg(unittest.TestCase):
 
     def test_missing_file_is_defaults(self):
         cfg = config.read_manager_cfg(os.path.join(self.dir, 'nope.cfg'))
-        self.assertEqual({'db_path': '', 'poll_fast': 30, 'poll_slow': 600}, cfg)
+        self.assertEqual(config.MANAGER_DEFAULTS, cfg)
 
     def test_junk_value_falls_back_to_default(self):
         p = self.write('manager.cfg', 'db_path=/mnt/x\npoll_fast=banana\n')
@@ -97,6 +97,52 @@ class TestReadKey(unittest.TestCase):
 
     def test_node_id_cannot_traverse(self):
         self.assertIsNone(config.read_key(self.dir, '../../etc/passwd'))
+
+
+class TestThresholds(unittest.TestCase):
+    def write(self, text):
+        path = os.path.join(tempfile.mkdtemp(), 'manager.cfg')
+        with open(path, 'w', encoding='utf-8') as fh:
+            fh.write(text)
+        return path
+
+    def test_defaults_when_absent(self):
+        cfg = config.read_manager_cfg(self.write('db_path=/mnt/user/x\n'))
+        self.assertEqual(90, cfg['capacity_high_water'])
+        self.assertEqual(50, cfg['temp_warn'])
+        self.assertEqual(60, cfg['temp_crit'])
+        self.assertEqual(15, cfg['error_window_min'])
+
+    def test_values_are_read(self):
+        cfg = config.read_manager_cfg(self.write(
+            'db_path=/mnt/user/x\ncapacity_high_water=85\ntemp_warn=45\n'
+            'temp_crit=55\nerror_window_min=30\n'))
+        self.assertEqual(85, cfg['capacity_high_water'])
+        self.assertEqual(45, cfg['temp_warn'])
+        self.assertEqual(55, cfg['temp_crit'])
+        self.assertEqual(30, cfg['error_window_min'])
+
+    def test_nonsense_falls_back_rather_than_raising(self):
+        cfg = config.read_manager_cfg(self.write('db_path=/x\ncapacity_high_water=soon\n'))
+        self.assertEqual(90, cfg['capacity_high_water'])
+
+    def test_an_out_of_range_percentage_falls_back(self):
+        cfg = config.read_manager_cfg(self.write('db_path=/x\ncapacity_high_water=900\n'))
+        self.assertEqual(90, cfg['capacity_high_water'])
+
+    def test_crit_below_warn_falls_back_to_both_defaults(self):
+        # An inverted pair would make thermal unreachable; refuse the pair, not
+        # just the second value.
+        cfg = config.read_manager_cfg(self.write('db_path=/x\ntemp_warn=70\ntemp_crit=40\n'))
+        self.assertEqual(50, cfg['temp_warn'])
+        self.assertEqual(60, cfg['temp_crit'])
+
+    def test_the_defaults_match_the_health_engine(self):
+        # Duplicated deliberately - config must not import health - so assert
+        # they agree rather than trusting they do.
+        import health
+        for key, value in health.DEFAULT_THRESHOLDS.items():
+            self.assertEqual(value, config.MANAGER_DEFAULTS[key], key)
 
 
 if __name__ == '__main__':

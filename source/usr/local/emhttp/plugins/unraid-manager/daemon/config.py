@@ -17,7 +17,18 @@ MANAGER_CFG = CFG_DIR + '/manager.cfg'
 NODES_CFG = CFG_DIR + '/nodes.cfg'
 KEYS_DIR = CFG_DIR + '/keys'
 
-MANAGER_DEFAULTS = {'db_path': '', 'poll_fast': 30, 'poll_slow': 600}
+MANAGER_DEFAULTS = {'db_path': '', 'poll_fast': 30, 'poll_slow': 600,
+                    # Health thresholds. Duplicated from health.DEFAULT_THRESHOLDS
+                    # rather than imported: this module is the flash-config reader
+                    # and must not depend on the evaluator. test_config.py asserts
+                    # the two agree.
+                    'capacity_high_water': 90, 'temp_warn': 50, 'temp_crit': 60,
+                    'error_window_min': 15}
+
+# key -> (minimum, maximum), inclusive. Outside the range is nonsense and falls
+# back rather than producing an indicator that can never fire.
+THRESHOLD_BOUNDS = {'capacity_high_water': (50, 99), 'temp_warn': (20, 99),
+                    'temp_crit': (20, 99), 'error_window_min': (1, 1440)}
 
 
 def _clean(value):
@@ -62,10 +73,20 @@ def read_manager_cfg(path=MANAGER_CFG):
             cfg['db_path'] = value
         elif key in ('poll_fast', 'poll_slow'):
             cfg[key] = _as_int(value, MANAGER_DEFAULTS[key])
+        elif key in THRESHOLD_BOUNDS:
+            cfg[key] = _as_int(value, MANAGER_DEFAULTS[key])
     if cfg['poll_fast'] < 5:
         cfg['poll_fast'] = MANAGER_DEFAULTS['poll_fast']
     if cfg['poll_slow'] < cfg['poll_fast']:
         cfg['poll_slow'] = MANAGER_DEFAULTS['poll_slow']
+    for key, (low, high) in THRESHOLD_BOUNDS.items():
+        if not low <= cfg[key] <= high:
+            cfg[key] = MANAGER_DEFAULTS[key]
+    if cfg['temp_crit'] <= cfg['temp_warn']:
+        # An inverted pair makes one of the two bands unreachable. Refuse the
+        # pair rather than silently keeping half of a nonsensical setting.
+        cfg['temp_warn'] = MANAGER_DEFAULTS['temp_warn']
+        cfg['temp_crit'] = MANAGER_DEFAULTS['temp_crit']
     return cfg
 
 

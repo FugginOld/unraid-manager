@@ -58,7 +58,7 @@ function um_fleet_disks(?SQLite3 $db): array {
                 'temp' => $disk['temp'] ?? null,
                 'smart_status' => $disk['smart_status'] ?? null,
                 'interface' => $disk['interface'] ?? null,
-                'slot' => $slot['name'] ?? null,
+                'slot' => $slot['slot'] ?? null,
                 'errors' => $slot['numErrors'] ?? null,
                 'array_status' => $slot['status'] ?? null,
                 'fetched_at' => $diskRow['fetched_at'],

@@ -30,8 +30,8 @@ $disks = json_encode(['count' => 1, 'spare_count' => 1,
                   'size' => 8001563222016, 'temp' => 31.0, 'smart_status' => 'OK',
                   'interface' => 'SATA', 'serial' => 'SENTINEL-SERIAL-NOT-FOR-EXPORT']]]);
 $array = json_encode(['state' => 'STARTED',
-    'disks' => [['idx' => 1, 'name' => 'disk1', 'device' => 'sdc', 'temp' => 36,
-                 'numErrors' => 2, 'status' => 'DISK_OK']]]);
+    'disks' => [['slot' => 'disk1', 'device' => 'sdc', 'temp' => 36,
+                 'numErrors' => 2, 'status' => 'DISK_OK', 'size' => 18000207600128]]]);
 
 $db->exec("INSERT INTO node_state VALUES('a1b2','disks','ok',NULL,'2026-08-27T10:00:00Z','$disks')");
 $db->exec("INSERT INTO node_state VALUES('a1b2','array','ok',NULL,'2026-08-27T10:00:00Z','$array')");

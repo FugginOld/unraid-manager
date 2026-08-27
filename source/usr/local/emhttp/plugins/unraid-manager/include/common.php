@@ -268,31 +268,53 @@ function um_public_node(array $row): array {
 
 /* ── database, read-only ──────────────────────────────────────────────────── */
 
-function um_readonly(PDO $pdo): PDO {
+function um_readonly(SQLite3 $db): SQLite3 {
     /* The daemon is the only writer; a page request must never be able to write
        to or corrupt its database.
-       Deliberately a PRAGMA rather than a 'sqlite:file:...?mode=ro' DSN: URI
-       filenames are a compile-time sqlite option that pdo_sqlite does not
-       guarantee is on, and when it is off the whole DSN is taken as a literal
-       path — which silently produces a WRITABLE handle to a file named
-       "file:/mnt/...?mode=ro". query_only is a runtime setting that either
-       applies or throws, and common_test.php proves it by attempting a write. */
-    $pdo->exec('PRAGMA query_only = 1');
-    return $pdo;
+
+       SQLite3, not PDO. Unraid's php-fpm ships the sqlite3 extension but NOT
+       pdo_sqlite - PDO::getAvailableDrivers() is an empty array there, so every
+       `new PDO('sqlite:...')` fails with "could not find driver" and every read
+       silently returned nothing. The CLI does have pdo_sqlite, which is why the
+       test suite never noticed. Found on Raven during the P0 live trial;
+       recorded as verified platform fact 15.
+
+       query_only is deliberately a PRAGMA rather than an OPEN_READONLY flag: a
+       WAL database needs to map its -shm to be read at all, and a reader
+       without write access to it fails in a way that looks like corruption.
+       Opening read-write and then forbidding writes at runtime is both safer
+       and provable - common_test.php proves it by attempting an INSERT. */
+    $db->enableExceptions(true);
+    $db->exec('PRAGMA query_only = 1');
+    return $db;
 }
 
-function um_db(): ?PDO {
+function um_query(SQLite3 $db, string $sql, array $params = []): array {
+    /* SQLite3 has no fetchAll. One helper beats four hand-rolled while loops. */
+    $stmt = $db->prepare($sql);
+    if ($stmt === false) return [];
+    foreach ($params as $name => $value) {
+        $stmt->bindValue($name, $value, is_int($value) ? SQLITE3_INTEGER : SQLITE3_TEXT);
+    }
+    $result = $stmt->execute();
+    if ($result === false) return [];
+    $rows = [];
+    while ($row = $result->fetchArray(SQLITE3_ASSOC)) $rows[] = $row;
+    $result->finalize();
+    return $rows;
+}
+
+function um_db(): ?SQLite3 {
     $cfg = um_read_ini_file(um_manager_cfg())[''] ?? [];
     $dir = (string) ($cfg['db_path'] ?? '');
     if ($dir === '' || !um_valid_db_path($dir)) return null;
     $file = rtrim($dir, '/') . '/manager.db';
     if (!is_file($file)) return null;
     try {
-        $pdo = new PDO('sqlite:' . $file, null, null,
-                       [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
-        $pdo->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
-        return um_readonly($pdo);
-    } catch (PDOException $e) {
+        $db = new SQLite3($file, SQLITE3_OPEN_READWRITE);
+        $db->busyTimeout(5000);
+        return um_readonly($db);
+    } catch (Throwable $e) {
         return null;
     }
 }

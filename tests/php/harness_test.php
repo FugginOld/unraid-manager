@@ -13,7 +13,11 @@ function check(string $name, bool $ok): void {
 
 check('php 8.0 or newer', PHP_VERSION_ID >= 80000);
 check('json extension present', function_exists('json_encode'));
-check('pdo_sqlite present', in_array('sqlite', PDO::getAvailableDrivers(), true));
+/* sqlite3, NOT pdo_sqlite. Unraid's php-fpm ships the sqlite3 extension and no
+   pdo_sqlite driver, so a suite that checks for PDO checks something the target
+   does not have - which is how every PHP read came back empty on Raven while
+   this test passed locally. */
+check('the sqlite3 extension is present', class_exists('SQLite3'));
 
 echo $fails === 0 ? "harness: all pass\n" : "harness: $fails FAILED\n";
 exit($fails === 0 ? 0 : 1);

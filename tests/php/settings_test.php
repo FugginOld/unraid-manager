@@ -49,8 +49,8 @@ check('the daemon action is csrf-gated like every other post',
       str_contains($src, 'um_require_csrf($_POST)'));
 
 /* ── events query ─────────────────────────────────────────────────────────── */
-$db = new PDO('sqlite::memory:');
-$db->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
+$db = new SQLite3(':memory:');
+$db->enableExceptions(true);
 $db->exec('CREATE TABLE events(id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL,
            node_id TEXT, kind TEXT NOT NULL, message TEXT NOT NULL)');
 for ($i = 1; $i <= 250; $i++) {

@@ -5,15 +5,13 @@ require_once __DIR__ . '/../include/common.php';
 
 const UM_EVENTS_CAP = 200;
 
-function um_events_query(PDO $db, int $since, int $limit): array {
+function um_events_query(SQLite3 $db, int $since, int $limit): array {
     $limit = max(0, min($limit, UM_EVENTS_CAP));
     if ($limit === 0) return [];
-    $stmt = $db->prepare('SELECT id, ts, node_id, kind, message FROM events '
-                       . 'WHERE id > :since ORDER BY id DESC LIMIT :limit');
-    $stmt->bindValue(':since', max(0, $since), PDO::PARAM_INT);
-    $stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
-    $stmt->execute();
-    return $stmt->fetchAll();
+    return um_query($db,
+        'SELECT id, ts, node_id, kind, message FROM events '
+        . 'WHERE id > :since ORDER BY id DESC LIMIT :limit',
+        [':since' => max(0, $since), ':limit' => $limit]);
 }
 
 if (PHP_SAPI !== 'cli') {

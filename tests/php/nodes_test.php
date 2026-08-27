@@ -57,8 +57,8 @@ check('an empty name falls back to the address', $r['values']['name'] === '192.1
 check('the key is not in the registry values', !array_key_exists('key', $r['values']));
 
 /* ── list and detail shapes ───────────────────────────────────────────────── */
-$db = new PDO('sqlite::memory:');
-$db->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
+$db = new SQLite3(':memory:');
+$db->enableExceptions(true);
 $db->exec('CREATE TABLE nodes(id TEXT PRIMARY KEY, name TEXT, address TEXT, port INTEGER,
            tier INTEGER, enabled INTEGER, added_at TEXT, last_seen TEXT)');
 $db->exec('CREATE TABLE node_state(node_id TEXT, domain TEXT, status TEXT, error TEXT,

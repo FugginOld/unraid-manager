@@ -31,16 +31,13 @@ function um_rollup(array $domains): string {
     return 'ok';
 }
 
-function um_state_rows(PDO $db, ?string $id = null): array {
+function um_state_rows(SQLite3 $db, ?string $id = null): array {
     $sql = 'SELECT node_id, domain, status, error, fetched_at, payload FROM node_state';
-    if ($id !== null) {
-        $stmt = $db->prepare($sql . ' WHERE node_id = :id');
-        $stmt->execute([':id' => $id]);
-    } else {
-        $stmt = $db->query($sql);
-    }
+    $rows = $id === null
+        ? um_query($db, $sql)
+        : um_query($db, $sql . ' WHERE node_id = :id', [':id' => $id]);
     $out = [];
-    foreach ($stmt->fetchAll() as $row) {
+    foreach ($rows as $row) {
         $out[$row['node_id']][$row['domain']] = $row;
     }
     return $out;
@@ -79,23 +76,21 @@ function um_shape_node(array $node, array $domains, bool $with_payloads): array 
     return $out;
 }
 
-function um_nodes_list(?PDO $db): array {
+function um_nodes_list(?SQLite3 $db): array {
     if ($db === null) return [];
     $states = um_state_rows($db);
     $out = [];
-    foreach ($db->query('SELECT * FROM nodes ORDER BY name')->fetchAll() as $node) {
+    foreach (um_query($db, 'SELECT * FROM nodes ORDER BY name') as $node) {
         $out[] = um_shape_node($node, $states[$node['id']] ?? [], false);
     }
     return $out;
 }
 
-function um_node_detail(?PDO $db, string $id): ?array {
+function um_node_detail(?SQLite3 $db, string $id): ?array {
     if ($db === null) return null;
-    $stmt = $db->prepare('SELECT * FROM nodes WHERE id = :id');
-    $stmt->execute([':id' => $id]);
-    $node = $stmt->fetch();
-    if (!$node) return null;
-    return um_shape_node($node, (um_state_rows($db, $id))[$id] ?? [], true);
+    $rows = um_query($db, 'SELECT * FROM nodes WHERE id = :id', [':id' => $id]);
+    if (!$rows) return null;
+    return um_shape_node($rows[0], (um_state_rows($db, $id))[$id] ?? [], true);
 }
 
 function um_enroll_validate(array $post, array $existing): array {

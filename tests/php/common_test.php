@@ -164,15 +164,21 @@ check('delete_key removes the file', !is_file($keyfile));
 /* The daemon is the only writer. A page request must not be able to write, and
    the guard is a runtime PRAGMA, so prove it with an actual INSERT rather than
    trusting a DSN flag. */
-$rodb = new PDO('sqlite::memory:');
-$rodb->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+$rodb = new SQLite3(':memory:');
+$rodb->enableExceptions(true);
 $rodb->exec('CREATE TABLE t(x)');
 um_readonly($rodb);
 $threw = false;
-try { $rodb->exec("INSERT INTO t VALUES(1)"); } catch (PDOException $e) { $threw = true; }
+try { $rodb->exec("INSERT INTO t VALUES(1)"); } catch (Throwable $e) { $threw = true; }
 check('a write through a read-only handle throws', $threw);
 check('a read through a read-only handle still works',
-      $rodb->query('SELECT COUNT(*) FROM t')->fetchColumn() === 0);
+      um_query($rodb, 'SELECT COUNT(*) AS n FROM t')[0]['n'] === 0);
+check('the read layer uses sqlite3, not pdo',
+      str_contains($common_src, 'function um_db(): ?SQLite3')
+      && str_contains($common_src, 'new SQLite3('));
+/* No negative "PDO must not appear" clause: the comment above um_readonly
+   explains the pdo_sqlite trap and would trip it. The signature is the real
+   assertion - a revert to PDO cannot keep it. */
 check('um_db applies the read-only pragma', str_contains($common_src, 'um_readonly('));
 
 /* ── every endpoint passes through the gates ──────────────────────────────── */

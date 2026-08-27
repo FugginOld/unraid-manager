@@ -132,4 +132,12 @@ seed fixtures were found to encode shapes the API cannot return.
     parser still reads it where a box returns it, and reports `None` — unknown,
     never zero — where it does not. Verified live 2026-08-26 against Golem.
 
+15. **Unraid's php-fpm has NO `pdo_sqlite`.** `PDO::getAvailableDrivers()` is
+    an empty array in the fpm-fcgi SAPI, so every `new PDO('sqlite:...')` fails
+    with "could not find driver" — caught, and every read silently returns
+    nothing while the daemon looks perfectly healthy. The php CLI *does* have
+    pdo_sqlite, which is why an off-box test suite cannot see this. The
+    extension that IS present in both is `sqlite3`, so the PHP read layer uses
+    the `SQLite3` class. Verified live 2026-08-26 on Raven, php 8.2, fpm-fcgi.
+
 - Raven's `disks` 504 root cause (box-side issue, not a blocker).

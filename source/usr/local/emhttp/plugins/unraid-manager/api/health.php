@@ -34,7 +34,13 @@ function um_fleet_health(?SQLite3 $db): array {
         /* No verdict yet means the daemon has not evaluated this node. That is
            not health - a node enrolled a minute ago must never render green. */
         $state = $overall['state'] ?? 'unknown';
-        if (!isset($counts[$state])) $state = 'unknown';
+        if (!isset($counts[$state])) {
+            /* A known severity outside ok|degraded|unknown (store.py's CHECK
+               also admits watch/warn on this column) is still a node we CAN
+               see - it must roll up to degraded, not read as unreachable.
+               Only a genuinely unrecognised value fails closed to unknown. */
+            $state = in_array($state, ['watch', 'warn'], true) ? 'degraded' : 'unknown';
+        }
         $counts[$state]++;
 
         $payload = function (string $domain) use ($states, $node) {
@@ -72,5 +78,6 @@ function um_fleet_health(?SQLite3 $db): array {
 
 if (PHP_SAPI !== 'cli') {
     um_require_session();
-    um_json(um_fleet_health(um_db()));
+    $db = um_db();
+    um_json(um_fleet_health($db) + ['db' => $db !== null]);
 }

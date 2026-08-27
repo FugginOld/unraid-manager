@@ -54,7 +54,7 @@ def evaluate_array_state(array):
 def evaluate_capacity(array, thresholds):
     # Absence and emptiness are different facts. A blind array domain must not
     # borrow the empty array's clean bill of health - fail closed.
-    if not array or 'capacity' not in array:
+    if not array or array.get('capacity') is None:
         return Indicator(UNKNOWN, None, 'no array capacity reported')
 
     capacity = array.get('capacity') or {}
@@ -117,3 +117,69 @@ def evaluate(payloads, thresholds=None, errors_history=()):
         'thermal': evaluate_thermal(array, limits),
         'disk_errors': evaluate_disk_errors(errors_history),
     }
+
+
+# -- hysteresis ---------------------------------------------------------------
+
+ESCALATE_AFTER = 2      # consecutive agreeing samples to get worse (~60s)
+CLEAR_AFTER = 5         # consecutive agreeing samples to get better (~2.5 min)
+
+
+def apply_hysteresis(current, proposed, pending_state, pending_count,
+                     up=ESCALATE_AFTER, down=CLEAR_AFTER):
+    """Debounce one indicator. Returns (state, pending_state, pending_count).
+
+    Asymmetric on purpose: an operator should learn quickly that something
+    turned bad, and green should not come back until it is convincingly fine.
+    A disk sitting exactly on the threshold would otherwise blink every poll.
+
+    unknown is not a severity, so it does not use the ladder - but it is not a
+    free pass either. Entering unknown is immediate; leaving it is immediate
+    only toward ok. Coming back blind-to-bad still needs confirming, or a
+    single bad reading after a blind spell flips the card with no debounce at
+    all.
+    """
+    if proposed == current:
+        return current, None, 0
+
+    # ENTERING unknown is immediate. It means this poll could not judge, and
+    # continuing to display the previous verdict would assert something we no
+    # longer know.
+    if proposed == UNKNOWN:
+        return proposed, None, 0
+
+    if current == UNKNOWN:
+        # LEAVING unknown is asymmetric too. Good news is believed at once - the
+        # node answered and it is fine. Bad news still has to be confirmed,
+        # exactly as it would from ok, so one bad reading after a blind spell
+        # cannot flip the card on its own.
+        if proposed == OK:
+            return proposed, None, 0
+        needed = up
+    else:
+        needed = up if LADDER.index(proposed) > LADDER.index(current) else down
+
+    if proposed != pending_state:
+        pending_state, pending_count = proposed, 0
+    pending_count += 1
+
+    if pending_count >= needed:
+        return proposed, None, 0
+    return current, pending_state, pending_count
+
+
+def node_overall(domain_statuses, indicators):
+    """The chip the fleet table shows: ok | degraded | unknown.
+
+    Worst of two rollups - domain reachability, and indicator health. Only
+    reachability can produce `unknown`; an indicator that could not be judged
+    is excluded rather than counted as bad.
+    """
+    statuses = list(domain_statuses)
+    if not statuses or all(s == UNKNOWN for s in statuses):
+        return 'unknown'
+    if any(s in (UNKNOWN, 'error') for s in statuses):
+        return 'degraded'
+    if any(i.state in (WATCH, WARN) for i in indicators.values()):
+        return 'degraded'
+    return 'ok'

@@ -61,6 +61,15 @@ class TestCapacity(unittest.TestCase):
         out = health.evaluate_capacity(array_payload(), self.T)
         self.assertEqual(health.WARN, out.state)
 
+    def test_a_null_capacity_is_unknown_not_empty(self):
+        # Value presence, not key presence: a reported null is not a reported zero.
+        self.assertEqual(health.UNKNOWN, health.evaluate_capacity(
+            {'capacity': None}, health.DEFAULT_THRESHOLDS).state)
+
+    def test_a_reported_zero_is_still_an_empty_array(self):
+        self.assertEqual(health.OK, health.evaluate_capacity(
+            {'capacity': {'used': 0, 'total': 0}}, health.DEFAULT_THRESHOLDS).state)
+
 
 class TestThermal(unittest.TestCase):
     T = health.DEFAULT_THRESHOLDS

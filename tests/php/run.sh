@@ -8,7 +8,15 @@ fails=0
 for t in tests/php/*_test.php; do
     [ -e "$t" ] || continue
     echo "--- $t"
-    php -f "$t" || fails=$((fails + 1))
+    out=$(php -f "$t" 2>&1)
+    code=$?
+    echo "$out"
+    if [ "$code" -ne 0 ]; then
+        fails=$((fails + 1))
+    elif ! grep -q 'all pass' <<< "$out"; then
+        echo "!!! $t exited 0 without ever printing 'all pass' - treating as FAILED"
+        fails=$((fails + 1))
+    fi
 done
 if [ "$fails" -ne 0 ]; then
     echo "php suite: $fails file(s) FAILED"

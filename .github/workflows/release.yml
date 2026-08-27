@@ -1,0 +1,87 @@
+name: release
+
+# Cut a release by pushing a date tag from main:
+#   1. add a ###2026.08.25### block to <CHANGES> in unraid-manager.plg, commit, push
+#   2. git tag 2026.08.25 && git push --tags
+#
+# This workflow runs the tests, builds the .txz, patches version / md5 / pkgURL
+# in unraid-manager.plg on main, and publishes. Unraid clients poll that plg on
+# main, so the patch commit is what actually ships.
+on:
+  push:
+    tags: ['20*']
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    uses: ./.github/workflows/tests.yml
+
+  release:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      # The plg is patched and pushed to main, so the tag must be main's tip —
+      # otherwise we ship a txz built from code the tag does not point at.
+      - name: Tag must point at main
+        run: |
+          test "$(git rev-parse HEAD)" = "$(git rev-parse "$GITHUB_REF_NAME^{commit}")" \
+            || { echo "::error::tag $GITHUB_REF_NAME is not main's tip"; exit 1; }
+
+      # No CHANGES block, no release. That is the forcing function for the
+      # changelog Unraid displays in its plugin manager.
+      - name: Extract changelog for this version
+        run: |
+          awk -v v="###$GITHUB_REF_NAME###" \
+            '$0==v {f=1; next} /^###/ {f=0} f' unraid-manager.plg > block.md
+          test -s block.md \
+            || { echo "::error::no ###$GITHUB_REF_NAME### block in unraid-manager.plg <CHANGES>"; exit 1; }
+          { echo "## Highlights"; echo; cat block.md; } > notes.md
+
+      - name: Build unraid-manager.txz
+        run: bash build.sh "$GITHUB_REF_NAME"
+
+      - name: Patch version, md5 and pkgURL in unraid-manager.plg
+        run: |
+          MD5=$(md5sum releases/unraid-manager.txz | cut -d' ' -f1)
+          VER="$GITHUB_REF_NAME"
+          sed -i \
+            -e "s|<!ENTITY version .*|<!ENTITY version   \"$VER\">|" \
+            -e "s|<!ENTITY md5 .*|<!ENTITY md5       \"$MD5\">|" \
+            -e "s|\(<!ENTITY pkgURL .*/download/\)[^/]*\(/unraid-manager.txz\">\)|\1$VER\2|" \
+            unraid-manager.plg
+          # pkgURL repeats the version as a literal, so all three must land.
+          if ! grep -q "ENTITY version .*\"$VER\"" unraid-manager.plg \
+            || ! grep -q "ENTITY md5 .*\"$MD5\"" unraid-manager.plg \
+            || ! grep -q "/download/$VER/unraid-manager.txz" unraid-manager.plg; then
+            echo "::error::plg patch missed an entity"
+            grep '<!ENTITY' unraid-manager.plg
+            exit 1
+          fi
+
+      # The plg gate test again, against the PATCHED file. The pre-build run
+      # checked the file as committed; this checks what actually ships.
+      - name: Re-check the patched plg
+        run: |
+          sudo apt-get update && sudo apt-get install -y php-cli php-xml
+          php -f tests/php/plg_test.php
+
+      - name: Commit the bumped plg to main
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit unraid-manager.plg -m "Release $GITHUB_REF_NAME"
+          git push origin main
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" releases/unraid-manager.txz \
+            -t "$GITHUB_REF_NAME" -F notes.md --generate-notes

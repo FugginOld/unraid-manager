@@ -1,0 +1,82 @@
+name: tests
+
+# Two suites, neither of which may touch a live Unraid box: the Python daemon
+# is tested against captured fixtures, the PHP layer against pure predicates.
+# No secret is needed here and none should ever be added.
+on:
+  push:
+  pull_request:
+  workflow_call:      # release.yml gates the release on this
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # PINNED to the version in the Unraid 7.3.2 base image. The daemon is
+      # stdlib-only and must run there unchanged; a dev machine on a newer
+      # Python will happily accept syntax this job rejects, which is the point.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: No third-party imports in the daemon
+        run: |
+          ! grep -rEn '^\s*(import|from)\s+(requests|yaml|urllib3|aiohttp|pydantic)' \
+            source/usr/local/emhttp/plugins/unraid-manager/daemon/ \
+            || { echo "::error::the daemon must be stdlib-only"; exit 1; }
+
+      - name: Run the python suite
+        run: python -m unittest discover -s tests/python -v
+
+      - name: Byte-compile everything shipped
+        run: python -m compileall -q source/usr/local/emhttp/plugins/unraid-manager/daemon scripts
+
+  php:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'      # matches Unraid 7.x
+
+      - name: Lint PHP
+        run: find source tests -name '*.php' -print0 | xargs -0 -r -n1 php -l
+
+      - name: Lint pages (they are PHP with a header block)
+        run: |
+          for page in source/usr/local/emhttp/plugins/unraid-manager/*.page; do
+            sed '1,/^---$/d' "$page" > /tmp/page.php
+            php -l /tmp/page.php
+          done
+
+      # Grouped, and rooted at the repo so build.sh is included: in
+      # `-name a -o -name b -print0` the -print0 binds to the second predicate
+      # only, so the first set is matched and then silently discarded.
+      - name: Lint shell
+        run: find . -path ./.git -prune -o \( -name '*.sh' -o -name 'rc.unraid-manager' \) -print0
+             | xargs -0 -r -n1 bash -n
+
+      - name: Lint JS
+        run: find source -name '*.js' -print0 | xargs -0 -r -n1 node --check
+
+      - name: Run the php suite
+        run: bash tests/php/run.sh
+
+  secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # An API key committed once is a key that has to be rotated on a real box.
+      # Cheap to check, expensive to miss.
+      - name: No key files, no key-shaped strings in fixtures
+        run: |
+          ! find . -name '*.key' -not -path './.git/*' | grep -q . \
+            || { echo "::error::a .key file is committed"; exit 1; }
+          ! grep -rEl '[A-Za-z0-9_-]{40,}' tests/python/fixtures unraid-manager.plg \
+            || { echo "::error::a token-shaped string is committed"; exit 1; }

@@ -13,7 +13,7 @@ for t in tests/php/*_test.php; do
     echo "$out"
     if [ "$code" -ne 0 ]; then
         fails=$((fails + 1))
-    elif ! grep -q 'all pass' <<< "$out"; then
+    elif ! grep -q ': all pass$' <<< "$out"; then
         echo "!!! $t exited 0 without ever printing 'all pass' - treating as FAILED"
         fails=$((fails + 1))
     fi

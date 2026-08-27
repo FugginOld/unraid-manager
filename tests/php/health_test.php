@@ -79,11 +79,16 @@ $db->exec("INSERT INTO nodes VALUES('e5f6','Banana','10.0.0.11',80,0,1,
            '2026-08-27T11:00:00Z',NULL,'SENTINEL-NOT-FOR-EXPORT')");
 $db->exec("INSERT INTO node_health VALUES('d4e5','overall','warn',NULL,'thermal',
            NULL,0,'2026-08-27T06:00:00Z','2026-08-27T10:00:00Z')");
+$db->exec("INSERT INTO nodes VALUES('f6a7','Watch','10.0.0.12',80,0,1,
+           '2026-08-27T11:00:00Z',NULL,'SENTINEL-NOT-FOR-EXPORT')");
+$db->exec("INSERT INTO node_health VALUES('f6a7','overall','watch',NULL,'capacity',
+           NULL,0,'2026-08-27T06:00:00Z','2026-08-27T10:00:00Z')");
 $db->exec("INSERT INTO node_health VALUES('e5f6','overall','banana',NULL,'?',
            NULL,0,'2026-08-27T06:00:00Z','2026-08-27T10:00:00Z')");
 $out = um_fleet_health($db);
 $byId = array_column($out['nodes'], null, 'id');
 check('a warn overall rolls up to degraded', $byId['d4e5']['state'] === 'degraded');
+check('a watch overall rolls up to degraded too', $byId['f6a7']['state'] === 'degraded');
 check('an unrecognised overall value fails closed to unknown', $byId['e5f6']['state'] === 'unknown');
 
 check('a null db answers empty rather than fataling',
@@ -92,6 +97,10 @@ check('a null db answers empty rather than fataling',
 
 $src = (string) file_get_contents($base . '/api/health.php');
 check('session gated', str_contains($src, 'um_require_session()'));
+/* The dispatch block cannot run under CLI, so the only way to keep the
+   unreadable-database flag from being silently reverted is to pin its text. */
+check('the dispatch reports whether the database was readable',
+      str_contains($src, "'db' => \$db !== null"));
 check('no key can leave', !str_contains(json_encode($out), 'SENTINEL-NOT-FOR-EXPORT'));
 
 echo $fails === 0 ? "health: all pass\n" : "health: $fails FAILED\n";

@@ -10,7 +10,7 @@ import os
 import posixpath
 import sqlite3
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 DB_FILENAME = 'manager.db'
 
 
@@ -34,6 +34,13 @@ CREATE INDEX IF NOT EXISTS samples_by_series ON samples(node_id, metric, ts);
 CREATE TABLE IF NOT EXISTS events(
   id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL, node_id TEXT,
   kind TEXT NOT NULL, message TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS node_health(
+  node_id TEXT NOT NULL, indicator TEXT NOT NULL,
+  state TEXT NOT NULL CHECK(state IN ('ok','watch','warn','unknown')),
+  value REAL, basis TEXT,
+  pending_state TEXT, pending_count INTEGER NOT NULL DEFAULT 0,
+  since TEXT, updated_at TEXT NOT NULL,
+  PRIMARY KEY(node_id, indicator));
 """
 
 
@@ -131,7 +138,7 @@ def sync_registry(conn, nodes):
 
     removed = [i for i in existing if i not in seen]
     for node_id in removed:
-        for table in ('node_state', 'samples', 'events'):
+        for table in ('node_state', 'samples', 'events', 'node_health'):
             conn.execute('DELETE FROM %s WHERE node_id=?' % table, (node_id,))
         conn.execute('DELETE FROM nodes WHERE id=?', (node_id,))
 
@@ -220,3 +227,51 @@ def prune(conn, now=None, sample_days=7, event_cap=10000, vacuum=False):
         conn.execute('VACUUM')
 
     return {'samples': max(samples, 0), 'events': max(events, 0), 'vacuumed': bool(vacuum)}
+
+
+VALID_HEALTH = ('ok', 'watch', 'warn', 'unknown')
+
+
+def upsert_health(conn, node_id, indicator, state, value=None, basis=None,
+                  pending_state=None, pending_count=0, now=None):
+    """Record one indicator's verdict.
+
+    `since` is preserved while the state is unchanged and reset when it changes,
+    which is what lets the UI say "degraded for 4 hours" instead of just
+    "degraded". `updated_at` always advances, so a stale row is visible as one.
+    """
+    if state not in VALID_HEALTH:
+        raise ValueError('invalid health state: %r' % state)
+    stamp = now or utcnow()
+    previous = conn.execute(
+        'SELECT state, since FROM node_health WHERE node_id=? AND indicator=?',
+        (node_id, indicator)).fetchone()
+    since = previous['since'] if previous and previous['state'] == state else stamp
+    conn.execute(
+        'INSERT INTO node_health(node_id,indicator,state,value,basis,'
+        'pending_state,pending_count,since,updated_at) VALUES(?,?,?,?,?,?,?,?,?) '
+        'ON CONFLICT(node_id,indicator) DO UPDATE SET '
+        'state=excluded.state, value=excluded.value, basis=excluded.basis, '
+        'pending_state=excluded.pending_state, pending_count=excluded.pending_count, '
+        'since=excluded.since, updated_at=excluded.updated_at',
+        (node_id, indicator, state, value, basis, pending_state,
+         int(pending_count), since, stamp))
+    conn.commit()
+
+
+def read_health(conn, node_id):
+    """Every indicator for one node, keyed by indicator name."""
+    rows = conn.execute('SELECT * FROM node_health WHERE node_id=?', (node_id,)).fetchall()
+    return {r['indicator']: dict(r) for r in rows}
+
+
+def recent_samples(conn, node_id, metric, since_ts):
+    """(ts, value) pairs at or after since_ts, ascending.
+
+    Timestamps are lexically comparable ISO-8601 UTC, so the window is a string
+    comparison - the same property retention relies on.
+    """
+    rows = conn.execute(
+        'SELECT ts, value FROM samples WHERE node_id=? AND metric=? AND ts >= ? '
+        'ORDER BY ts', (node_id, metric, since_ts)).fetchall()
+    return [(r['ts'], r['value']) for r in rows]

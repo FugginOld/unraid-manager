@@ -52,12 +52,17 @@ def evaluate_array_state(array):
 
 
 def evaluate_capacity(array, thresholds):
-    capacity = (array or {}).get('capacity') or {}
+    # Absence and emptiness are different facts. A blind array domain must not
+    # borrow the empty array's clean bill of health - fail closed.
+    if not array or 'capacity' not in array:
+        return Indicator(UNKNOWN, None, 'no array capacity reported')
+
+    capacity = array.get('capacity') or {}
     total = capacity.get('total') or 0
     used = capacity.get('used') or 0
     if not total:
-        # Constraint 3: an array with nothing in it is a healthy array, and
-        # 0/0 is not 100%.
+        # Constraint 3: an array that REPORTED zero is an empty array, and it is
+        # healthy. 0/0 is not 100%.
         return Indicator(OK, None, 'array is empty')
 
     pct = round(used * 100.0 / total, 1)

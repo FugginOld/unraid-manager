@@ -94,10 +94,15 @@ def parse_array(data):
     # counters - Query.disks enumerates hardware and knows neither - and the
     # fleet disk table joins the two on device name. Kept to six fields
     # because this payload is stored as JSON on every poll.
+    # Parities are included: errors_total below sums disks AND parities, so
+    # leaving parity drives out would drive an indicator from a drive that has
+    # no row in the table. `size` is multiplied like every other kilobyte value
+    # in this function - the physical disks payload reports bytes, and two
+    # merged payloads carrying a key named `size` in different units is a trap.
     disk_rows = [{'slot': d.get('name'), 'device': d.get('device'),
                   'temp': d.get('temp'), 'numErrors': _int(d.get('numErrors')),
-                  'status': d.get('status'), 'size': _int(d.get('size'))}
-                 for d in disks]
+                  'status': d.get('status'), 'size': _int(d.get('size')) * KB}
+                 for d in list(disks) + list(parities)]
 
     return {
         'state': array.get('state'),

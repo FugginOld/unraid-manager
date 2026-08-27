@@ -129,10 +129,21 @@ class TestEvaluate(unittest.TestCase):
         out = health.evaluate({})
         self.assertEqual(health.UNKNOWN, out['array_state'].state)
         self.assertEqual(health.UNKNOWN, out['thermal'].state)
+        # Absence is not emptiness. A blind domain must never inherit the empty
+        # array's ok.
+        self.assertEqual(health.UNKNOWN, out['capacity'].state)
 
-    def test_partial_thresholds_fall_back_to_the_defaults(self):
-        out = health.evaluate({'array': array_payload()}, thresholds={'temp_warn': 45})
-        self.assertIn(out['capacity'].state, health.LADDER)
+    def test_unknown_is_not_on_the_severity_ladder(self):
+        self.assertNotIn(health.UNKNOWN, health.LADDER)
+
+    def test_partial_thresholds_override_and_the_rest_fall_back(self):
+        # Observes BOTH halves: the override changes thermal, and capacity still
+        # uses the default high-water mark.
+        out = health.evaluate({'array': {'temp_max': 47,
+                                         'capacity': {'used': 10, 'total': 100}}},
+                              thresholds={'temp_warn': 45})
+        self.assertEqual(health.WATCH, out['thermal'].state, 'the override applied')
+        self.assertEqual(health.OK, out['capacity'].state, 'the default applied')
 
 
 class TestErrorsSample(unittest.TestCase):
@@ -148,11 +159,19 @@ class TestErrorsSample(unittest.TestCase):
         # The fleet disk table joins on these; array.disks is the only source
         # of slot and numErrors.
         out = collector.parse_array(context.fixture_json('seed/array_populated.json')['data'])
-        self.assertEqual(22, len(out['disks']))
+        self.assertEqual(23, len(out['disks']), '22 data disks plus the parity drive')
         first = out['disks'][0]
         self.assertEqual('disk1', first['slot'])
         self.assertEqual('sdc', first['device'])
-        self.assertIn('numErrors', first)
+        self.assertEqual(0, first['numErrors'], 'the value, not just the key')
+        self.assertEqual('parity', out['disks'][-1]['slot'])
+
+    def test_disk_row_size_is_bytes_like_every_other_capacity(self):
+        # array.disks reports kilobytes; the physical disks payload reports
+        # bytes. Two merged payloads with a `size` key in different units is how
+        # a table shows a 14 TB drive as 13 GB.
+        out = collector.parse_array(context.fixture_json('seed/array_populated.json')['data'])
+        self.assertEqual(13672382412 * 1024, out['disks'][0]['size'])
 
     def test_an_empty_array_has_no_disk_rows(self):
         out = collector.parse_array(context.fixture_json('seed/array_empty.json')['data'])

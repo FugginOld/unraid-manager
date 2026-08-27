@@ -1,0 +1,6 @@
+# Everything in this repo ships to a Linux box: a .page, an rc script or a
+# daemon carrying CRLF is a syntax error there, not a cosmetic difference.
+# Normalise on commit and check out LF even on Windows.
+* text=auto eol=lf
+*.png binary
+*.txz binary

@@ -67,7 +67,9 @@ check('at least one INLINE block present', count($inl[1]) > 0);
         - whichever remaining Method="" FILE has an INLINE child that is NOT
           the stop block is the main install block, whatever it contains. */
 $expectedStop = '[ -x /usr/local/emhttp/plugins/unraid-manager/scripts/rc.unraid-manager ] && '
-              . '/usr/local/emhttp/plugins/unraid-manager/scripts/rc.unraid-manager stop';
+              . '/usr/local/emhttp/plugins/unraid-manager/scripts/rc.unraid-manager stop'
+              . "
+exit 0";
 $pkgIdx = $stopIdx = null;
 $installInline = $removeInline = $stopInline = '';
 if ($ok !== false) {
@@ -128,6 +130,13 @@ check('a daemon-stop FILE exists, guarded so a fresh install is a no-op',
 check('the daemon-stop FILE is positioned before the package FILE',
       $stopIdx !== null && $pkgIdx !== null && $stopIdx < $pkgIdx);
 
+/* A guarded no-op must still SUCCEED. The pre-stop block's -x test is false on
+   every fresh install; without an explicit exit 0 the block returns 1 and Unraid
+   aborts the install with "run failed: '/bin/bash' returned 1". Observed on Raven
+   during the P0 live trial, before a single file was unpacked. */
+check('the pre-stop block cannot fail a fresh install',
+      (bool) preg_match('/rc\.unraid-manager stop\s*
+exit 0/', $raw));
 check('remove block present', str_contains($raw, 'Method="remove"'));
 check('remove drops the cron', str_contains($raw, 'rm -f /etc/cron.d/unraid-manager'));
 /* Flash config and the pool DB survive an uninstall unless the operator says

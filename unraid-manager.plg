@@ -29,10 +29,17 @@ because that is what it is.
      run on that entry already overwrites usr/local/emhttp/plugins/unraid-manager
      by the time an INLINE block placed after it would run, so a stop line
      inside that later block is too late to protect a live process. Guarded so
-     a fresh install (nothing running yet) is a clean no-op. -->
+     a fresh install (nothing running yet) is a clean no-op.
+
+     The trailing `exit 0` is load-bearing, not tidiness. On a fresh install the
+     -x test is false, the &amp;&amp; short-circuits, and the block's exit status is
+     that failed test - which Unraid reads as "run failed: '/bin/bash' returned
+     1" and aborts the whole install before a single file is unpacked. Found on
+     Raven during the P0 live trial. -->
 <FILE Run="/bin/bash">
 <INLINE>
 [ -x /usr/local/emhttp/plugins/unraid-manager/scripts/rc.unraid-manager ] &amp;&amp; /usr/local/emhttp/plugins/unraid-manager/scripts/rc.unraid-manager stop
+exit 0
 </INLINE>
 </FILE>
 

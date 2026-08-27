@@ -41,6 +41,12 @@ check('start exits non-zero when the path is refused', str_contains($rc, 'exit 1
    rather than a literal the source never contains. */
 check('run dir is under /var/run', str_contains($rc, 'RUN_DIR="/var/run/unraid-manager"'));
 check('pidfile is composed from the run dir', str_contains($rc, 'PIDFILE="$RUN_DIR/managerd.pid"'));
+/* The pid this script signals as root must not be writable by whoever feels
+   like it. Unraid's umask is 000, so managerd chmods the file explicitly after
+   writing - observed world-writable on Raven. Asserted here because the rc
+   script is what turns that number into a signal. */
+check('the daemon chmods its pidfile', str_contains(
+      (string) @file_get_contents($base . '/daemon/managerd.py'), 'os.chmod(ctl.PID_PATH, 0o644)'));
 check('stop sends SIGTERM, not SIGKILL', str_contains($rc, 'kill -TERM')
       && !str_contains($rc, 'kill -9'));
 check('starts the daemon with python3', str_contains($rc, 'python3')

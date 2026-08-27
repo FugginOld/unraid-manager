@@ -434,6 +434,10 @@ def main(argv=None):
     os.makedirs(ctl.RUN_DIR, exist_ok=True)
     with open(ctl.PID_PATH, 'w', encoding='utf-8') as fh:
         fh.write(str(os.getpid()))
+    # Unraid runs with umask 000, so this lands world-writable by default -
+    # observed on Raven. The rc script feeds this number to `kill -TERM` as
+    # root, so anyone who can rewrite it picks the victim.
+    os.chmod(ctl.PID_PATH, 0o644)
 
     try:
         while not stop.is_set():

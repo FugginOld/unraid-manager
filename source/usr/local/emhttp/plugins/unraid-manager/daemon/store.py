@@ -36,7 +36,10 @@ CREATE TABLE IF NOT EXISTS events(
   kind TEXT NOT NULL, message TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS node_health(
   node_id TEXT NOT NULL, indicator TEXT NOT NULL,
-  state TEXT NOT NULL CHECK(state IN ('ok','watch','warn','unknown')),
+  -- Two vocabularies share this column because two kinds of row share this
+  -- table. An indicator row is ok|watch|warn|unknown; the single `overall` row
+  -- per node is ok|degraded|unknown, the three-value chip the UI shows.
+  state TEXT NOT NULL CHECK(state IN ('ok','watch','warn','degraded','unknown')),
   value REAL, basis TEXT,
   pending_state TEXT, pending_count INTEGER NOT NULL DEFAULT 0,
   since TEXT, updated_at TEXT NOT NULL,
@@ -229,7 +232,10 @@ def prune(conn, now=None, sample_days=7, event_cap=10000, vacuum=False):
     return {'samples': max(samples, 0), 'events': max(events, 0), 'vacuumed': bool(vacuum)}
 
 
-VALID_HEALTH = ('ok', 'watch', 'warn', 'unknown')
+# Indicator rows use ok|watch|warn|unknown. The one `overall` row per node
+# uses ok|degraded|unknown - the three-value chip. Both live in one column
+# because they are both "the state of a thing about this node".
+VALID_HEALTH = ('ok', 'watch', 'warn', 'degraded', 'unknown')
 
 
 def upsert_health(conn, node_id, indicator, state, value=None, basis=None,

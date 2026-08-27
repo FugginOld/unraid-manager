@@ -5,6 +5,7 @@ it, so nothing here opens a socket or a database at import time. The entrypoint
 lives under `if __name__ == '__main__'`.
 """
 
+import datetime
 import json
 import logging
 import logging.handlers
@@ -21,6 +22,7 @@ import collector
 import config
 import ctl
 import gqlclient
+import health
 import store
 
 BACKOFF_CAP = 600          # seconds; the slow lane's interval is the ceiling
@@ -285,6 +287,7 @@ class Manager(object):
                 store.touch_last_seen(self.conn, node_id, ts=stamp)
 
         if lane == collector.FAST:
+            self._update_health(node_id, results, stamp)
             self.scheduler.record(node_id, any_ok=any_ok)
             # One journal row per transition, not one per failed cycle: a node
             # down overnight would otherwise write a thousand identical rows and
@@ -304,6 +307,65 @@ class Manager(object):
         if changed:
             self._publish({'node_id': node_id, 'domains': changed, 'ts': stamp})
         return changed
+
+    HEALTH_THRESHOLDS = ('capacity_high_water', 'temp_warn', 'temp_crit',
+                         'error_window_min')
+
+    def _update_health(self, node_id, results, stamp):
+        """Evaluate this cycle's payloads, debounce, and persist. Returns the
+        node's overall state.
+
+        Fast lane only: the indicators are all computed from fast-lane payloads,
+        and running this after a slow cycle would evaluate an absent array
+        payload and report unknown for a node that is perfectly readable.
+        """
+        thresholds = {k: self.cfg[k] for k in self.HEALTH_THRESHOLDS if k in self.cfg}
+        payloads = {r.domain: r.payload for r in results if r.status == 'ok'}
+
+        window = int(thresholds.get('error_window_min', health.DEFAULT_THRESHOLDS
+                                    ['error_window_min']))
+        cutoff = (datetime.datetime.strptime(stamp, '%Y-%m-%dT%H:%M:%SZ')
+                  - datetime.timedelta(minutes=window)).strftime('%Y-%m-%dT%H:%M:%SZ')
+
+        with self._lock:
+            errors_history = store.recent_samples(self.conn, node_id,
+                                                  'array.errors_total', cutoff)
+            previous = store.read_health(self.conn, node_id)
+
+        indicators = health.evaluate(payloads, thresholds, errors_history)
+        settled = {}
+        rows = []
+        for name, proposed in indicators.items():
+            prior = previous.get(name) or {}
+            # A node with no row yet starts from OK, NOT from whatever this poll
+            # proposes. Seeding with the proposal makes current == proposed on
+            # the first sighting, which returns immediately and means hysteresis
+            # never engages for a newly enrolled node.
+            state, pending_state, pending_count = health.apply_hysteresis(
+                prior.get('state') or health.OK, proposed.state,
+                prior.get('pending_state'), prior.get('pending_count') or 0)
+            settled[name] = health.Indicator(state, proposed.value, proposed.basis)
+            rows.append((name, state, proposed.value, proposed.basis,
+                         pending_state, pending_count))
+
+        overall = health.node_overall([r.status for r in results], settled)
+
+        # Name what dragged the node down, so the UI can say "Degraded -
+        # capacity, thermal" instead of just "Degraded". `basis` means WHY
+        # everywhere else in this table; the overall row is no exception.
+        culprits = sorted(name for name, i in settled.items()
+                          if i.state in (health.WATCH, health.WARN))
+        blind = sorted(r.domain for r in results if r.status != 'ok')
+        why = ', '.join(culprits or blind) or 'all clear'
+
+        with self._lock:
+            for name, state, value, basis, pending_state, pending_count in rows:
+                store.upsert_health(self.conn, node_id, name, state, value=value,
+                                    basis=basis, pending_state=pending_state,
+                                    pending_count=int(pending_count or 0), now=stamp)
+            store.upsert_health(self.conn, node_id, 'overall', overall,
+                                basis=why, now=stamp)
+        return overall
 
     def _publish(self, message):
         """A ping saying something changed -- never the data itself.

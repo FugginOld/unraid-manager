@@ -2,6 +2,9 @@ Menu="Tasks:95"
 Type="xmenu"
 Title="Fleet"
 Icon="icon.png"
+Tag="sitemap"
+Code="f0e8"
+Tabs="true"
 ---
 <?PHP
 /* The Fleet tab: every enrolled node, its rolled-up state, and how long ago we

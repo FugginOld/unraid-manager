@@ -68,6 +68,13 @@ check('fleet page exists', $fleet !== '');
 check('fleet page is a top-level xmenu tab', (bool) preg_match('/^Type="xmenu"/m', $fleet));
 check('fleet page is ordered under Tasks', (bool) preg_match('/^Menu="Tasks:\d+"/m', $fleet));
 check('fleet page has a Title', (bool) preg_match('/^Title=/m', $fleet));
+/* Code= is what actually puts a tab in the top bar. Every top-level page on a
+   live 7.3.2 box has one - Dashboard, Main, Shares, Docker, VMs, Tools, Apps,
+   and third-party ones like networkstats - and the tab is simply not rendered
+   without it. Title and Icon alone are the Utilities-page shape, which is why
+   the settings page appeared and the Fleet tab did not. Observed on Raven. */
+check('fleet page declares an icon-font Code, or it never renders',
+      (bool) preg_match('/^Code="[0-9a-f]{4}"/m', $fleet));
 check('fleet page loads its javascript', str_contains($fleet, 'fleet.js'));
 
 check('fleet js exists', $fjs !== '');

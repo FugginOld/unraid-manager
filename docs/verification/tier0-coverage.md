@@ -140,4 +140,13 @@ seed fixtures were found to encode shapes the API cannot return.
     extension that IS present in both is `sqlite3`, so the PHP read layer uses
     the `SQLite3` class. Verified live 2026-08-26 on Raven, php 8.2, fpm-fcgi.
 
+16. **A top-level tab needs `Code=`, not `Icon=`.** `Menu="Tasks:NN"` plus
+    `Type="xmenu"` is not enough: the top bar renders an icon-font glyph from
+    `Code="<4 hex>"`, and a page without one is skipped silently. Confirmed
+    against every top-level page on Raven (Dashboard e943, Main e908, Shares
+    e92a, Docker e90b, VMs e918, Plugins e944, Apps f0db, Tools e909,
+    networkstats f1fe). `Name=` is optional; pages without it take the label
+    from `Title=` or the filename. `Icon=`/`Tag=` are the Utilities-submenu
+    shape and are ignored by the top bar. Verified live 2026-08-26.
+
 - Raven's `disks` 504 root cause (box-side issue, not a blocker).

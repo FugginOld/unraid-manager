@@ -30,16 +30,29 @@ function um_fleet_disks(?SQLite3 $db): array {
     foreach (um_query($db, 'SELECT id, name FROM nodes ORDER BY name') as $node) {
         $rows = $byNode[$node['id']] ?? [];
         $diskRow = $rows['disks'] ?? null;
-        if ($diskRow === null) continue;
 
-        $payload = json_decode((string) $diskRow['payload'], true);
-        if (!is_array($payload)) continue;
+        if ($diskRow === null) {
+            /* The slow lane has never run for this node at all - enrolled but
+               not yet polled. Fail closed: an uncollected node is visibly
+               uncollected, not silently absent from every list. */
+            $stale[] = ['node' => $node['name'], 'node_id' => $node['id'],
+                        'status' => 'unknown', 'error' => 'no disks poll recorded yet',
+                        'fetched_at' => null];
+            continue;
+        }
 
         if (($diskRow['status'] ?? '') !== 'ok') {
-            $stale[] = ['node' => $node['name'], 'status' => $diskRow['status'],
+            $stale[] = ['node' => $node['name'], 'node_id' => $node['id'],
+                        'status' => $diskRow['status'],
                         'error' => (string) $diskRow['error'],
                         'fetched_at' => $diskRow['fetched_at']];
         }
+
+        $payload = json_decode((string) $diskRow['payload'], true);
+        /* A first-ever failure leaves payload NULL (store.py has no prior row
+           to retain). The stale entry above already covers it - there is
+           nothing left to merge. */
+        if (!is_array($payload)) continue;
 
         /* array.disks carries slot and numErrors; the physical enumeration does
            not. Join on device name, which both report. */
@@ -49,8 +62,11 @@ function um_fleet_disks(?SQLite3 $db): array {
             if (!empty($slot['device'])) $slots[$slot['device']] = $slot;
         }
 
+        $usedSlots = [];
         foreach ($payload['disks'] ?? [] as $disk) {
-            $slot = $slots[$disk['name'] ?? ''] ?? [];
+            $key = $disk['name'] ?? '';
+            $slot = $slots[$key] ?? [];
+            if ($key !== '' && isset($slots[$key])) $usedSlots[$key] = true;
             $disks[] = [
                 'node' => $node['name'], 'node_id' => $node['id'],
                 'name' => $disk['name'] ?? null, 'device' => $disk['device'] ?? null,
@@ -58,6 +74,24 @@ function um_fleet_disks(?SQLite3 $db): array {
                 'temp' => $disk['temp'] ?? null,
                 'smart_status' => $disk['smart_status'] ?? null,
                 'interface' => $disk['interface'] ?? null,
+                'slot' => $slot['slot'] ?? null,
+                'errors' => $slot['numErrors'] ?? null,
+                'array_status' => $slot['status'] ?? null,
+                'fetched_at' => $diskRow['fetched_at'],
+            ];
+        }
+        /* array.disks can name a slot with nothing behind it in the physical
+           enumeration - a drive that fell off the bus. That is exactly what
+           this screen exists to show, so it gets a row too: everything the
+           array reported survives, every physical-only reading is null
+           rather than invented. */
+        foreach ($slots as $key => $slot) {
+            if (isset($usedSlots[$key])) continue;
+            $disks[] = [
+                'node' => $node['name'], 'node_id' => $node['id'],
+                'name' => null, 'device' => $slot['device'] ?? null,
+                'vendor' => null, 'size' => null, 'temp' => null,
+                'smart_status' => null, 'interface' => null,
                 'slot' => $slot['slot'] ?? null,
                 'errors' => $slot['numErrors'] ?? null,
                 'array_status' => $slot['status'] ?? null,

@@ -233,6 +233,36 @@ class TestPublish(ManagerCase):
         m.run_cycle('a1b2', collector.SLOW, 1001.0)     # must not raise
 
 
+class TestShutdown(ManagerCase):
+    class FakePool(object):
+        def __init__(self):
+            self.kwargs = None
+
+        def shutdown(self, **kwargs):
+            self.kwargs = kwargs
+
+    def test_shutdown_does_not_wait_on_in_flight_polls(self):
+        # A slow-lane disks request can run the full 90s timeout. Waiting for it
+        # made `rc stop` report failure after 10s on Raven and would stall array
+        # stop; the write lock, not the pool, is what must be respected.
+        m = self.manager()
+        m.pool = self.FakePool()
+        codes = []
+        managerd.shutdown(m, self.conn, exit_fn=codes.append)
+        self.assertEqual({'wait': False, 'cancel_futures': True}, m.pool.kwargs)
+        self.assertEqual([0], codes)
+
+    def test_shutdown_closes_the_database(self):
+        m = self.manager()
+        m.pool = self.FakePool()
+        managerd.shutdown(m, self.conn, exit_fn=lambda code: None)
+        with self.assertRaises(Exception):
+            self.conn.execute('SELECT 1')
+
+    def tearDown(self):
+        pass          # shutdown() already closed the connection
+
+
 class TestNchanEndpoint(unittest.TestCase):
     CONF = '''
     server {

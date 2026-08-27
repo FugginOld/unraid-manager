@@ -390,6 +390,34 @@ class Manager(object):
         }
 
 
+def shutdown(manager, conn, exit_fn=os._exit):
+    """Stop now, without waiting on a peer that may be 90 seconds from replying.
+
+    A slow-lane `disks` request can legitimately run for the full 90s timeout,
+    and shutdown(wait=True) blocks on it - so `rc stop` gave up after 10s and
+    reported a failure while the process was still draining, and array stop
+    would have waited on the same thing. Observed on Raven.
+
+    What must not be cut short is a write. Taking the lock guarantees no worker
+    is mid-transaction; an in-flight HTTP request holds nothing and losing it
+    costs one poll. After that the process leaves immediately rather than
+    letting ThreadPoolExecutor's non-daemon threads join at interpreter exit.
+    """
+    log.info('shutting down')
+    manager.pool.shutdown(wait=False, cancel_futures=True)
+    with manager._lock:
+        try:
+            store.log_event(conn, 'daemon', 'managerd stopped')
+        finally:
+            conn.close()
+    logging.shutdown()
+    try:
+        os.unlink(ctl.PID_PATH)
+    except OSError:
+        pass
+    exit_fn(0)
+
+
 def main(argv=None):
     setup_logging()
     cfg = config.read_manager_cfg()
@@ -448,14 +476,7 @@ def main(argv=None):
             manager.tick(time.time())
             stop.wait(1.0)
     finally:
-        log.info('shutting down')
-        manager.pool.shutdown(wait=True)
-        store.log_event(conn, 'daemon', 'managerd stopped')
-        conn.close()
-        try:
-            os.unlink(ctl.PID_PATH)
-        except OSError:
-            pass
+        shutdown(manager, conn)
     return 0
 
 

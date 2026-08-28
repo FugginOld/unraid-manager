@@ -155,11 +155,6 @@ class TestThresholds(unittest.TestCase):
         for key, value in health.DEFAULT_THRESHOLDS.items():
             self.assertEqual(value, config.MANAGER_DEFAULTS[key], key)
 
-
-if __name__ == '__main__':
-    unittest.main()
-
-
 class TestPhpBoundsMirror(unittest.TestCase):
     """The settings form validates against its own copy of the bounds.
 
@@ -179,13 +174,15 @@ class TestPhpBoundsMirror(unittest.TestCase):
         import re
         with open(self.PHP, encoding='utf-8') as fh:
             src = fh.read()
-        block = re.search(r'const UM_THRESHOLDS = \[(.*?)\];', src, re.S)
+        block = re.search(r'const\s+UM_THRESHOLDS\s*=\s*\[(.*?)\];', src, re.S)
         self.assertIsNotNone(block, 'UM_THRESHOLDS not found in settings.php')
         rows = re.findall(r"'(\w+)'\s*=>\s*\[\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\]",
                           block.group(1))
         # A parse that silently finds nothing would make every assertion below
         # vacuous, which is the failure mode this whole test exists to prevent.
-        self.assertEqual(len(rows), 4, 'expected four threshold rows')
+        self.assertEqual(len(rows), len(config.THRESHOLD_BOUNDS),
+                         'parsed %d threshold rows, expected %d'
+                         % (len(rows), len(config.THRESHOLD_BOUNDS)))
         return {k: (int(lo), int(hi), int(default)) for k, lo, hi, default in rows}
 
     def test_php_bounds_match_python(self):
@@ -196,3 +193,7 @@ class TestPhpBoundsMirror(unittest.TestCase):
                              '%s bounds differ between settings.php and config.py' % key)
             self.assertEqual(default, config.MANAGER_DEFAULTS[key],
                              '%s default differs between settings.php and config.py' % key)
+
+
+if __name__ == '__main__':
+    unittest.main()

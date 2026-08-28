@@ -82,9 +82,44 @@ check('a threshold omitted from the post preserves the stored value',
       um_settings_validate($good)['values']['capacity_high_water'] === 77);
 check('a threshold present but empty restores the default even with a stored value on flash',
       um_settings_validate(array_merge($good, ['capacity_high_water' => '']))['values']['capacity_high_water'] === 90);
+
+/* A hand-edited manager.cfg must not be able to make the Settings page
+   unsaveable. The seeded values never passed through the form, so refusing them
+   would punish the operator for a file they may not have broken - config.py
+   already falls back rather than refusing, and this mirrors it. What the
+   operator actually submits is still refused on its own merits. */
+$brokenDir = sys_get_temp_dir() . '/um_settings_broken_' . getmypid();
+@mkdir($brokenDir, 0700, true);
+file_put_contents($brokenDir . '/manager.cfg',
+    "capacity_high_water=200
+temp_warn=80
+temp_crit=30
+error_window_min=abc
+");
+um_set_cfg_dir($brokenDir);
+$b = um_settings_validate($good);
+check('an out-of-range value on flash falls back rather than refusing the save',
+      $b['ok'] === true && $b['values']['capacity_high_water'] === 90);
+check('a non-numeric value on flash falls back rather than being cast to zero',
+      $b['values']['error_window_min'] === 15);
+check('an inverted pair on flash resets both, it does not block the save',
+      $b['values']['temp_warn'] === 50 && $b['values']['temp_crit'] === 60);
+check('an inverted pair the operator actually submits is still refused',
+      um_settings_validate(array_merge($good, ['temp_warn' => '70', 'temp_crit' => '40']))['ok'] === false);
+@unlink($brokenDir . '/manager.cfg');
+@rmdir($brokenDir);
 @unlink($storedDir . '/manager.cfg');
 @rmdir($storedDir);
-um_set_cfg_dir(UM_CFG_DIR_DEFAULT);
+/* Deliberately NOT um_set_cfg_dir(UM_CFG_DIR_DEFAULT). um_settings_validate
+   reads flash for any threshold the post omits, and $good omits all four - so
+   resetting to the default would make every check below read the operator's
+   real /boot/config/plugins/unraid-manager/manager.cfg. That passes here and in
+   CI only because /boot does not exist; run on the box, a hand-edited or a
+   pre-P1 cfg would red this suite for reasons unrelated to the change. Point at
+   an empty scratch dir instead, so the seed path resolves to the defaults. */
+$emptyDir = sys_get_temp_dir() . '/um_settings_empty_' . getmypid();
+@mkdir($emptyDir, 0700, true);
+um_set_cfg_dir($emptyDir);
 
 check('an out-of-range high water is refused',
       um_settings_validate(array_merge($good, ['capacity_high_water' => '5']))['ok'] === false);
@@ -211,6 +246,8 @@ check('since past the end is empty', um_events_query($db, 9999, 200) === []);
 check('a negative since is treated as zero', count(um_events_query($db, -5, 200)) === 200);
 check('a limit above the cap is clamped', count(um_events_query($db, 0, 5000)) === 200);
 check('a zero limit returns nothing', um_events_query($db, 0, 0) === []);
+
+@rmdir($emptyDir);
 
 echo $fails === 0 ? "settings: all pass\n" : "settings: $fails FAILED\n";
 exit($fails === 0 ? 0 : 1);

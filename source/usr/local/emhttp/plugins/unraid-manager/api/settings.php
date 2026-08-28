@@ -68,28 +68,39 @@ function um_settings_validate(array $post): array {
        operator clearing the input box, which does restore the default - the
        two cases look identical only when nothing has been stored yet. */
     $onFlash = um_read_ini_file(um_manager_cfg())[''] ?? [];
-    $thresholds = [];
+    $thresholds = $fromFlash = [];
     foreach (UM_THRESHOLDS as $key => [$min, $max, $default]) {
-        if (!array_key_exists($key, $post)) {
-            $thresholds[$key] = (int) ($onFlash[$key] ?? $default);
-            continue;
-        }
-        $raw = $post[$key];
+        $seeded = !array_key_exists($key, $post);
+        $fromFlash[$key] = $seeded;
+        $raw = $seeded ? (string) ($onFlash[$key] ?? $default) : $post[$key];
         if ($raw === '') { $thresholds[$key] = $default; continue; }
-        if (!is_numeric($raw)) {
-            return ['ok' => false, 'error' => "$key must be a number", 'values' => []];
+        if (!is_numeric($raw) || (int) $raw < $min || (int) $raw > $max) {
+            /* A seeded value came off flash, not off the form, so refusing it
+               would make the Settings page unsaveable until someone hand-fixed
+               the file that broke it. Fall back the way config.py:82-84 already
+               falls back, and let the operator's own submission be the only
+               thing that can be refused. */
+            if ($seeded) { $thresholds[$key] = $default; continue; }
+            return ['ok' => false, 'error' => is_numeric($raw)
+                ? "$key must be between $min and $max" : "$key must be a number",
+                'values' => []];
         }
-        $value = (int) $raw;
-        if ($value < $min || $value > $max) {
-            return ['ok' => false, 'error' => "$key must be between $min and $max",
-                    'values' => []];
-        }
-        $thresholds[$key] = $value;
+        $thresholds[$key] = (int) $raw;
     }
     if ($thresholds['temp_crit'] <= $thresholds['temp_warn']) {
-        return ['ok' => false, 'error' =>
-            'The critical temperature must be above the warning temperature, or one '
-            . 'of the two bands can never be reached.', 'values' => []];
+        if ($fromFlash['temp_warn'] && $fromFlash['temp_crit']) {
+            /* Neither half was submitted - the inverted pair is already on
+               flash, so refusing here would make the Settings page unsaveable
+               until someone hand-fixed the file that broke it. Reset both, the
+               way config.py:85-88 resets them, and let the operator's own
+               submission stay the only thing that can be refused. */
+            $thresholds['temp_warn'] = UM_THRESHOLDS['temp_warn'][2];
+            $thresholds['temp_crit'] = UM_THRESHOLDS['temp_crit'][2];
+        } else {
+            return ['ok' => false, 'error' =>
+                'The critical temperature must be above the warning temperature, or one '
+                . 'of the two bands can never be reached.', 'values' => []];
+        }
     }
 
     return ['ok' => true, 'error' => null,

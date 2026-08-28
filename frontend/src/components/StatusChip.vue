@@ -8,6 +8,11 @@ const LABELS = {
   unknown: ['?', 'Unknown'],
   watch: ['●', 'Watch'],
   warn: ['⚠', 'Warning'],
+  // .um-crit exists in the stylesheet below; without this entry state="crit"
+  // fell back to LABELS.unknown and rendered the critical colour next to the
+  // word "Unknown" - colour and word disagreeing, which is the one thing
+  // this component exists to prevent.
+  crit: ['✕', 'Critical'],
 }
 defineProps({ state: { type: String, default: 'unknown' } })
 </script>

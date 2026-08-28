@@ -15,17 +15,21 @@ const STALE_MS = 180000
 const stale = ref(false)
 // Seeded at load rather than zero: "never succeeded once" is the case the
 // banner exists for. A 0 seed would suppress it forever in exactly that case.
-let lastGood = Date.now()
+// A ref, not a private snapshot: the stale banner needs to say when the last
+// good response actually landed, the way P0's did.
+const lastGood = ref(Date.now())
 const callbacks = new Set()
 let started = false
 
+function kick (cb) {
+  return Promise.resolve().then(cb).then(
+    () => { lastGood.value = Date.now(); stale.value = false },
+    () => { /* the staleness check below is the report */ }
+  )
+}
+
 function tick () {
-  for (const cb of callbacks) {
-    Promise.resolve().then(cb).then(
-      () => { lastGood = Date.now(); stale.value = false },
-      () => { /* the staleness check below is the report */ }
-    )
-  }
+  for (const cb of callbacks) kick(cb)
 }
 
 function start () {
@@ -42,18 +46,27 @@ function start () {
   } catch {
     /* no EventSource: fallback only */
   }
-  tick()
+  // NOT tick() here: start() only builds the shared stream/timers, once.
+  // Fetching for a given caller happens when that caller registers (below),
+  // whether it is the first ever caller or the fiftieth - otherwise the
+  // first page load, and every later tab switch, waits up to FALLBACK_MS for
+  // its first data.
   setInterval(tick, FALLBACK_MS)
-  setInterval(() => { stale.value = Date.now() - lastGood > STALE_MS }, 15000)
+  setInterval(() => { stale.value = Date.now() - lastGood.value > STALE_MS }, 15000)
 }
 
 export function useLive (refresh) {
-  start()
   if (refresh) {
+    // Register, then kick THIS caller immediately - before start() - so a
+    // brand new callback never waits on the shared 30s timer, whether it is
+    // the very first caller (page load) or the Nth (a tab switch mounting a
+    // view mid-session).
     callbacks.add(refresh)
     // Only meaningful inside a component's setup(). App.vue's own call
     // supplies a refresh too, so this also unregisters cleanly there.
     if (getCurrentInstance()) onUnmounted(() => callbacks.delete(refresh))
+    kick(refresh)
   }
-  return { stale, tick }
+  start()
+  return { stale, tick, lastGood }
 }

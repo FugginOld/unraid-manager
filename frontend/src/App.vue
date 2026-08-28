@@ -24,7 +24,7 @@ const active = ref('overview')
 // their own views; useLive() is a module singleton, so this call does not
 // open a second stream on top of theirs.
 const { dbUnreadable, refresh } = useEndpoint('health')
-const { stale } = useLive(refresh)
+const { stale, lastGood } = useLive(refresh)
 </script>
 
 <template>
@@ -34,9 +34,10 @@ const { stale } = useLive(refresh)
       under
       <a href="/Settings/UnraidManagerSettings">Settings → Utilities → Unraid-Manager</a>.
     </p>
-    <p v-else-if="stale" class="um-stale-banner" role="status">
+    <p v-if="stale" class="um-stale-banner" role="status">
       These numbers are more than three minutes old — the manager has not
-      answered recently. Check that managerd is running on the Settings page.
+      answered since {{ new Date(lastGood).toLocaleTimeString() }}. Check that
+      managerd is running on the Settings page.
     </p>
     <nav class="um-tabs">
       <button v-for="tab in TABS" :key="tab.id" type="button"

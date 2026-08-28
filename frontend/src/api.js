@@ -5,11 +5,14 @@ const BASE = '/plugins/unraid-manager/api'
 // The top-level key each endpoint's payload always carries. A 200 that lacks
 // it - a malformed body, a stray {"error": …} - is not a fresh refresh; if we
 // accepted it, `lastGood` in live.js would stamp forward and the stale banner
-// would hide a screen showing nothing. This is the P0 guard
-// (`if (!r || !r.nodes) return`) generalised across the three endpoints, and
-// it is a different failure mode from `db: false` below: this one is "the
-// response is not shaped like a payload at all", not "the database could not
-// be opened".
+// would hide a screen showing nothing. This is in the spirit of the P0 guard
+// (`if (!r || !r.nodes) return`), generalised across the three endpoints, but
+// it is not identical: `expectKey in json` accepts `{"nodes": null}`, which
+// P0's `!r.nodes` rejected. Not reachable from today's PHP (every endpoint
+// always emits its key as an array), so left as is rather than tightened
+// speculatively. It is also a different failure mode from `db: false` below:
+// this one is "the response is not shaped like a payload at all", not "the
+// database could not be opened".
 const EXPECT_KEY = { health: 'nodes', disks: 'disks', drift: 'rows' }
 
 // GET only. P1 is strictly read-only against every peer and the pane mutates
@@ -21,7 +24,18 @@ export async function get (path) {
   return response.json()
 }
 
-export function useEndpoint (name) {
+// Memoised per endpoint name: App.vue's own heartbeat call and each view's
+// call (Tasks 13-15) both ask for the same name (e.g. 'health'), and without
+// this they'd each build a distinct `refresh` closure. live.js's Set of live
+// callbacks would then hold two different functions for the same endpoint,
+// so every tick and every nchan message would hit that endpoint's PHP twice -
+// on a busy fleet that's a doubled request rate, not a fixed cost, since
+// nchan nudges on every daemon state change. A shared `refresh` identity also
+// means only one fetch can ever stamp `lastGood`, instead of a race between
+// two duplicate reads of the same data.
+const CACHE = new Map()
+
+function buildEndpoint (name) {
   const data = ref(null)
   const error = ref(null)
   const loading = ref(true)
@@ -37,7 +51,11 @@ export function useEndpoint (name) {
     try {
       const json = await get(`${name}.php`)
       const expectKey = EXPECT_KEY[name]
-      if (!json || (expectKey && !(expectKey in json))) {
+      // Fail closed: an endpoint with no registered mapping must not
+      // silently fall back to "any 200 is a good refresh" - that is the
+      // exact P0 failure this guard exists to generalise away.
+      if (!expectKey) throw new Error(`${name}: no expected key registered`)
+      if (!json || !(expectKey in json)) {
         throw new Error(`${name}.php: response missing "${expectKey}"`)
       }
       data.value = json
@@ -55,4 +73,9 @@ export function useEndpoint (name) {
   }
 
   return { data, error, loading, dbUnreadable, refresh }
+}
+
+export function useEndpoint (name) {
+  if (!CACHE.has(name)) CACHE.set(name, buildEndpoint(name))
+  return CACHE.get(name)
 }

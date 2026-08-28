@@ -79,8 +79,8 @@ try {
      is also matched by the "No disk" filter button, which made this check pass
      against a view with amendment B deleted outright. Same mistake, and the
      same fix, as the UNKNOWN check below. */
-  const orphanRow = (htmlOrphan.split('<tr').find(r => r.includes('no disk')) ?? '').split('</tr>')[0]
-  const diskRow = (htmlOrphan.split('<tr').find(r => r.includes('disk1')) ?? '').split('</tr>')[0]
+  const orphanRow = (htmlOrphan.split('<tr').find(r => r.includes('no disk present')) ?? '').split('</tr>')[0]
+  const diskRow = (htmlOrphan.split('<tr').find(r => r.includes('/dev/sda')) ?? '').split('</tr>')[0]
   check('an orphan slot is marked by a WORD, not only by a colour or a blank cell',
         /no disk present/.test(orphanRow))
   check('exactly one of the two rows is marked as an orphan',
@@ -122,8 +122,9 @@ try {
   /* And it gets the same "we cannot see this" treatment NodeCard gives a null
      unread count - asserting only the absence of a zero left the um-unknown
      class deletable with the suite green. */
+  const nullErrRow = (htmlNullErrors.split('<tr').find(r => r.includes('/dev/sda')) ?? '').split('</tr>')[0]
   check('errors: null gets the unknown treatment, not a plain empty-looking cell',
-        /um-unknown[^>]*>\s*—/.test(htmlNullErrors))
+        /um-unknown[^>]*>\s*—/.test(nullErrRow))
 
   /* ── amendment C: both stale shapes, and neither reads as an error ─────── */
   const htmlNeverPolled = await renderView(Disks, {

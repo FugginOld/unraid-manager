@@ -335,3 +335,44 @@ function um_ctl(array $cmd, float $timeout = 10.0): array {
     $decoded = json_decode($line, true);
     return is_array($decoded) ? $decoded : ['ok' => false, 'error' => 'malformed reply from managerd'];
 }
+
+/* ── the built pane ───────────────────────────────────────────────────────── */
+
+const UM_UI_URL = '/plugins/unraid-manager/ui';
+
+function um_ui_dir(): string { return __DIR__ . '/../ui'; }
+
+function um_asset_tags(string $entry = 'src/main.js', ?string $dir = null): string {
+    /* Vite emits hashed filenames, and nothing may hardcode a hash into a page.
+       Read the manifest at run time and resolve them - the same approach Unraid
+       uses for its own bundle in
+       dynamix.my.servers/include/web-components-extractor.php.
+
+       Vite 5+ writes .vite/manifest.json; older versions wrote manifest.json at
+       the root. Accept both, so a toolchain bump cannot blank the page. */
+    $dir = $dir ?? um_ui_dir();
+    $manifest = [];
+    foreach (['/.vite/manifest.json', '/manifest.json'] as $candidate) {
+        $raw = @file_get_contents($dir . $candidate);
+        if ($raw === false) continue;
+        $decoded = json_decode($raw, true);
+        if (is_array($decoded)) { $manifest = $decoded; break; }
+    }
+
+    $item = $manifest[$entry] ?? null;
+    if (!$item || empty($item['file'])) {
+        /* Say so loudly. A blank page with nothing in the console is the worst
+           possible outcome of a build that did not run. */
+        return '<p class="um-stale">The Unraid-Manager interface is not built. '
+             . 'Reinstall the plugin, or run <code>bash build.sh</code> on a machine '
+             . 'that has node installed.</p>';
+    }
+
+    $tags = '';
+    foreach ($item['css'] ?? [] as $css) {
+        $tags .= '<link rel="stylesheet" href="' . UM_UI_URL . '/'
+               . htmlspecialchars($css) . '">' . "\n";
+    }
+    return $tags . '<script type="module" src="' . UM_UI_URL . '/'
+         . htmlspecialchars($item['file']) . '"></script>';
+}

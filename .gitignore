@@ -6,3 +6,6 @@ __pycache__/
 *.key
 keys/
 tests/python/fixtures/**/*.key
+
+frontend/node_modules/
+source/usr/local/emhttp/plugins/unraid-manager/ui/

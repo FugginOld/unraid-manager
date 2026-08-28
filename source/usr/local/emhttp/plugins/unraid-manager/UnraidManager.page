@@ -7,24 +7,13 @@ Code="f0e8"
 Tabs="true"
 ---
 <?PHP
-/* The Fleet tab: every enrolled node, its rolled-up state, and how long ago we
-   last heard from it. Read-only — P0 cannot change anything on a peer. */
+/* The Fleet pane. This file is a mount point and nothing else: the interface is
+   a Vue bundle whose hashed filenames are resolved from the Vite manifest at run
+   time by um_asset_tags(). */
+require_once '/usr/local/emhttp/plugins/unraid-manager/include/common.php';
 ?>
 <link rel="stylesheet" href="/plugins/unraid-manager/unraid-manager.css">
 
-<div id="um-fleet">
-  <div id="um-stale" class="um-stale" hidden></div>
-  <p id="um-summary">Loading fleet…</p>
-  <table class="tablesorter" id="um-fleet-table">
-    <thead>
-      <tr>
-        <th>Node</th><th>State</th><th>Array</th><th>Capacity</th>
-        <th>Unraid / API</th><th>Notifications</th><th>Last seen</th>
-      </tr>
-    </thead>
-    <tbody id="um-fleet-rows"><tr><td colspan="7">Loading…</td></tr></tbody>
-  </table>
-  <div id="um-detail"></div>
-</div>
+<div id="um-app"></div>
 
-<script src="/plugins/unraid-manager/fleet.js"></script>
+<?= um_asset_tags() ?>

@@ -32,6 +32,22 @@ fi
 test -d "$PLUGDIR" || { echo "ERROR: $PLUGDIR missing"; exit 1; }
 test -f "$PLUGDIR/scripts/rc.unraid-manager" || echo "WARN: rc script not present yet"
 
+# The pane is a Vue bundle, built here rather than committed, so what ships is
+# what the reviewed source produces. Refused outright rather than packaging a
+# stale ui/ that happens to be lying around.
+if [ -d frontend ]; then
+    command -v npm >/dev/null || {
+        echo "ERROR: npm not found and frontend/ exists."
+        echo "  The pane cannot be built. Install node, or build on a machine that has it."
+        exit 1
+    }
+    echo "--> Building the frontend..."
+    ( cd frontend && npm ci --silent && npm run build ) || {
+        echo "ERROR: the frontend build failed. Refusing to package a broken pane."
+        exit 1
+    }
+fi
+
 # Bytecode is not source. Running the suite leaves __pycache__ under source/,
 # and everything under source/ ships - so a build after a local test run puts
 # this machine's 3.13 .pyc files on a 3.11 box. Harmless (Python ignores a

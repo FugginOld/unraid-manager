@@ -68,6 +68,32 @@ jobs:
       - name: Run the php suite
         run: bash tests/php/run.sh
 
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Build the pane
+        run: cd frontend && npm ci && npm run build
+
+      - name: The manifest must exist, or nothing can mount the bundle
+        run: test -f source/usr/local/emhttp/plugins/unraid-manager/ui/.vite/manifest.json
+
+      # Plan section 10.1 budgets the bundle at 250 KB gzipped. Choosing a
+      # framework is a decision, not a licence.
+      - name: Bundle size budget
+        run: |
+          BUDGET=256000
+          TOTAL=$(find source/usr/local/emhttp/plugins/unraid-manager/ui \
+            \( -name '*.js' -o -name '*.css' \) -print0 | xargs -0 -r cat | gzip -c | wc -c)
+          echo "gzipped bundle: $TOTAL bytes (budget $BUDGET)"
+          [ "$TOTAL" -le "$BUDGET" ] || { echo "::error::bundle over budget"; exit 1; }
+
   secrets:
     runs-on: ubuntu-latest
     steps:

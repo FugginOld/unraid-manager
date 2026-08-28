@@ -1,0 +1,22 @@
+/* Theming is INHERITED, not chosen. Unraid ships four themes; every value here
+   reads Unraid's own custom property first and falls back to a literal only if
+   that property is missing. A hardcoded background anywhere in this bundle is a
+   bug (plan section 10.1). */
+#um-app {
+  --um-bg:      var(--background-color, #fff);
+  --um-fg:      var(--text-color, #1c1b1b);
+  --um-accent:  var(--accent-color, #ff8c2f);
+  --um-surface: color-mix(in srgb, var(--um-bg) 94%, var(--um-fg));
+  --um-border:  color-mix(in srgb, var(--um-bg) 82%, var(--um-fg));
+  --um-ok:      #3aa757;
+  --um-watch:   #d9a400;
+  --um-warn:    #e07b39;
+  --um-crit:    #cf3b3b;
+  /* Grey, and never grey-as-neutral-good: a node we cannot see must look
+     different from a healthy one AND from a failed one. */
+  --um-unknown: #7a7a7a;
+
+  color: var(--um-fg);
+}
+
+#um-app .um-hint { display: block; opacity: .75; font-size: .9em; }

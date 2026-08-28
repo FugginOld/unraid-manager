@@ -158,17 +158,25 @@ check('the db-unreadable banner is rendered by the shell, above the tabs, not by
 /* ── amendment 2A: useLive must tear down / be a singleton ───────────────── */
 /* `str_contains($live, 'started')` survives deleting `if (started) return` -
    the exact defect - because `started = true` is still on the next line. A
-   substring of an identifier is not an assertion about a construct. */
+   substring of an identifier is not an assertion about a construct. This is
+   also why the presence check below is deliberately weak: whether
+   onUnmounted() actually deregisters the right thing - and only the right
+   thing, when the identity is shared across callers (fix round 2's Critical)
+   - is a runtime question a grep cannot answer. That proof lives in
+   tests/js/live_singleton.mjs, via a real component mount and unmount. */
 check('useLive registers per-caller teardown via onUnmounted',
       (bool) preg_match('/onUnmounted\s*\(/', $live));
 check('start() guards against re-creating the singleton stream and timers',
       (bool) preg_match('/if\s*\(\s*started\s*\)\s*return/', $live));
 preg_match('/export function useLive[\s\S]*?\n\}/', $live, $useLiveMatch);
 $useLiveBody = $useLiveMatch[0] ?? '';
-$addPos = strpos($useLiveBody, 'callbacks.add(');
+$addPos = strpos($useLiveBody, 'register(refresh)');
 $kickPos = strpos($useLiveBody, 'kick(refresh)');
 check('a newly registered caller is kicked immediately, not left for the fallback timer',
       $addPos !== false && $kickPos !== false && $addPos < $kickPos);
+check('callbacks are refcounted (a Map), not a Set keyed by the memoised identity',
+      (bool) preg_match('/callbacks\s*=\s*new Map\s*\(\s*\)/', $live)
+      && str_contains($live, 'function unregister'));
 
 /* ── amendment 2B: the stale banner is page-wide ──────────────────────────── */
 check('App.vue imports the live-updates module', str_contains($app, "live.js"));
@@ -186,8 +194,14 @@ preg_match('/<p\s+v-if="stale"[^>]*>.*?<\/p>/s', $appTemplate, $staleBannerMatch
 $staleBannerBlock = $staleBannerMatch[0] ?? '';
 check('the stale banner names when the manager last answered',
       str_contains($staleBannerBlock, 'lastGood'));
-check('the two banners are independent, not v-else-if siblings',
-      !preg_match('/v-else-if\s*=\s*"stale"/', $app));
+/* A negative literal (`!preg_match('/v-else-if\s*=\s*"stale"/')`) is evaded
+   by quote style or whitespace; assert the positive construct instead. Both
+   $dbBannerBlock and $staleBannerBlock above are captured by a regex that
+   requires the literal attribute `v-if=` right after the tag name - `v-else-if`
+   does not match it, so either banner being demoted to v-else-if empties the
+   corresponding block and this fails. */
+check('both banners are independent sibling v-if elements, neither is v-else-if',
+      $dbBannerBlock !== '' && $staleBannerBlock !== '');
 $overviewStub = (string) @file_get_contents($src . '/views/Overview.vue');
 check('the stale banner did not stay behind in Overview.vue',
       !str_contains($overviewStub, 'stale'));
@@ -205,8 +219,11 @@ check('useEndpoint throws on a name with no expected key registered (fails close
       (bool) preg_match('/if\s*\(\s*!\s*expectKey\s*\)\s*throw/', $api));
 check('useEndpoint throws when the response lacks its expected top-level key',
       (bool) preg_match('/!\(\s*expectKey\s+in\s+json\s*\)[\s\S]{0,60}throw/', $api));
-check('useEndpoint is memoised per name (no duplicate refresh closures)',
-      str_contains($api, 'CACHE') && str_contains($api, '.has(name)'));
+/* A memoisation check belongs on the returned VALUE (are two calls the same
+   object?), not on the presence of a CACHE-shaped identifier - `return
+   buildEndpoint(name)` with the CACHE lines left sitting unused nearby still
+   satisfies both substrings. That is a runtime question; it is asserted for
+   real in tests/js/live_singleton.mjs via reference equality. */
 
 /* ── binding constraints that were unpinned ───────────────────────────────── */
 /* tokens.css's own header: "A hardcoded background anywhere in this bundle is

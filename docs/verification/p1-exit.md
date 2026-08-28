@@ -1,17 +1,20 @@
 # P1 exit — the pane on Raven and Golem
 
 Operator-assisted trial, 2026-08-28, Raven (manager) + Golem (peer).
-Head at start `ab77584`, release `2026.08.28`. Two defects were fixed during
-the trial; head at end `5296e86`.
+Head at start `ab77584`, release `2026.08.28`. Three P1 defects and three doc
+defects were fixed during and immediately after the trial; head at end
+`eaaf613`.
 
 ## Verdict
 
-**Not yet.** The pane does replace opening two browser tabs for everything it
-shows — one screen carries both boxes' health, disks and drift, it follows the
-theme, and it now updates live. What it cannot yet do is tell you when to stop
-believing it: with `managerd` stopped, the pane goes on displaying its last
-numbers with no warning of any kind, indefinitely. One open P1 defect
-(**F-1**) blocks the phase; everything else found is fixed or triaged.
+**Not yet — pending one live re-check.** The pane does replace opening two
+browser tabs for everything it shows: one screen carries both boxes' health,
+disks and drift, it follows the theme, and it now updates live. What it could
+not do during the trial was tell you when to stop believing it — with
+`managerd` stopped it went on displaying its last numbers with no warning of
+any kind, indefinitely (**F-1**). That is fixed and tested but has not yet been
+re-verified on hardware; the phase closes when steps 8b-8d pass on Raven and
+step 7 (hysteresis) has been run at all.
 
 ## Per step
 
@@ -26,8 +29,8 @@ numbers with no warning of any kind, indefinitely. One open P1 defect
 | 6 | Drift | pass (static); the live plugin-change check was not run |
 | 7 | Hysteresis | **not run** |
 | 8a | Live updates | **fail, then fixed** — see F-2 and F-3; now working |
-| 8b | Stale banner | **fail — F-1, open** |
-| 8c/8d | Banner across tabs, banner clears | **blocked by F-1** — no banner ever appeared |
+| 8b | Stale banner | **fail — F-1, fixed `a485caf`, needs re-check** |
+| 8c/8d | Banner across tabs, banner clears | **not yet run** — blocked by F-1 during the trial |
 | 9 | Themes | pass — white, black, azure, gray |
 | 10 | Bundle | pass — 31,206 bytes gzipped against a 256,000 budget |
 

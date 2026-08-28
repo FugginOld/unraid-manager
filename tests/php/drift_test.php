@@ -25,8 +25,10 @@ $db->exec("INSERT INTO nodes VALUES('b2c3','Raven','1.2.3.5',1,0,1,'x','y')");
 /* `kernel` is deliberately never reported by either node below - it exercises
    the all-null row skip (no node has ever reported this field, so it must not
    ship an empty row at all; see the "no row" check further down). */
-$golemInfo = json_encode(['unraid' => '7.3.2', 'api' => '4.37.3']);
-$ravenInfo = json_encode(['unraid' => '7.3.1', 'api' => '4.37.3']);
+$golemInfo = json_encode(['unraid' => '7.3.2', 'api' => '4.37.3',
+                          'php' => '8.4.23', 'docker' => '29.5.3']);
+$ravenInfo = json_encode(['unraid' => '7.3.1', 'api' => '4.37.3',
+                          'php' => '8.4.23', 'docker' => '28.1.0']);
 $db->exec("INSERT INTO node_state VALUES('a1b2','info','ok',NULL,'t','$golemInfo')");
 $db->exec("INSERT INTO node_state VALUES('b2c3','info','ok',NULL,'t','$ravenInfo')");
 
@@ -50,6 +52,13 @@ $rows = array_column($out['rows'], null, 'key');
 check('the unraid version row exists', isset($rows['unraid']));
 check('a divergent version row is flagged', $rows['unraid']['divergent'] === true);
 check('an identical version row is not flagged', $rows['api']['divergent'] === false);
+/* php and docker come from info.versions.packages, whose field names were read
+   off Raven's schema on 2026-08-27. Dropping either from UM_DRIFT_VERSIONS used
+   to leave the whole suite green - the row list itself was unpinned. */
+check('the package version rows the spec asks for are present',
+      isset($rows['php']) && isset($rows['docker']));
+check('an identical package version is not flagged', $rows['php']['divergent'] === false);
+check('a differing package version is flagged', $rows['docker']['divergent'] === true);
 check('cells are keyed by node id',
       $rows['unraid']['cells']['a1b2'] === '7.3.2' && $rows['unraid']['cells']['b2c3'] === '7.3.1');
 

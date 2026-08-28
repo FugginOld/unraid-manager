@@ -159,5 +159,24 @@ const second = useEndpoint('health')
 check('useEndpoint(name) returns the identical object on a second call',
       first === second && first.refresh === second.refresh)
 
+/* ── kick()'s success handler is how the stale banner ever CLEARS ─────────
+   No-op'ing it left all 13 checks and all 58 PHP checks green, while `stale`
+   would latch true after three minutes and never come back down - the same
+   "banner latches permanently" family as the round-2 Critical. Nothing was
+   asserting the fulfilled branch, only that a fetch happened. */
+{
+  let ok = () => {}
+  const probe = () => { ok(); return Promise.resolve() }
+  const { stale } = useLive(probe)
+  stale.value = true                       // pretend three minutes elapsed
+  await new Promise(r => setTimeout(r, 0)) // let the mount kick settle
+  check('a successful refresh clears the stale flag', stale.value === false)
+
+  stale.value = true
+  const failing = useLive(() => Promise.reject(new Error('endpoint down')))
+  await new Promise(r => setTimeout(r, 0))
+  check('a failed refresh does NOT clear the stale flag', failing.stale.value === true)
+}
+
 console.log(fails === 0 ? 'live_singleton: all pass' : `live_singleton: ${fails} FAILED`)
 process.exit(fails === 0 ? 0 : 1) // live.js's real setInterval calls would otherwise keep the loop alive

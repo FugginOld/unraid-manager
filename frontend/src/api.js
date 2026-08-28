@@ -26,7 +26,7 @@ export async function get (path) {
 
 // Memoised per endpoint name: App.vue's own heartbeat call and each view's
 // call (Tasks 13-15) both ask for the same name (e.g. 'health'), and without
-// this they'd each build a distinct `refresh` closure. live.js's Set of live
+// this they'd each build a distinct `refresh` closure. live.js's registry of live
 // callbacks would then hold two different functions for the same endpoint,
 // so every tick and every nchan message would hit that endpoint's PHP twice -
 // on a busy fleet that's a doubled request rate, not a fixed cost, since

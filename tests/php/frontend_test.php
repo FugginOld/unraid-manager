@@ -170,13 +170,21 @@ check('start() guards against re-creating the singleton stream and timers',
       (bool) preg_match('/if\s*\(\s*started\s*\)\s*return/', $live));
 preg_match('/export function useLive[\s\S]*?\n\}/', $live, $useLiveMatch);
 $useLiveBody = $useLiveMatch[0] ?? '';
-$addPos = strpos($useLiveBody, 'register(refresh)');
+/* Anchored, not strpos: 'register(refresh)' is a substring of
+   'unregister(refresh)', so the loose form matched the teardown call and
+   deleting the real registration left the whole PHP suite green. */
+$addPos = preg_match('/(?<![A-Za-z])register\(refresh\)/', $useLiveBody, $m, PREG_OFFSET_CAPTURE)
+    ? $m[0][1] : false;
 $kickPos = strpos($useLiveBody, 'kick(refresh)');
 check('a newly registered caller is kicked immediately, not left for the fallback timer',
       $addPos !== false && $kickPos !== false && $addPos < $kickPos);
+/* The Map alone is not the invariant - a Map that never counts fails exactly
+   the same way the Set did. Assert the counting itself; the behavioural proof
+   lives in tests/js/live_singleton.mjs, which is what actually catches this. */
 check('callbacks are refcounted (a Map), not a Set keyed by the memoised identity',
       (bool) preg_match('/callbacks\s*=\s*new Map\s*\(\s*\)/', $live)
-      && str_contains($live, 'function unregister'));
+      && (bool) preg_match('/callbacks\.set\(.*\+\s*1\)/', $live)
+      && (bool) preg_match('/callbacks\.delete\(/', $live));
 
 /* ── amendment 2B: the stale banner is page-wide ──────────────────────────── */
 check('App.vue imports the live-updates module', str_contains($app, "live.js"));

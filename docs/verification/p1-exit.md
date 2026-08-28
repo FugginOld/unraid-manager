@@ -68,17 +68,17 @@ no blank cells and no `—`, so both nodes had reported their plugin lists.
 
 | # | What | Severity | State |
 |---|------|----------|-------|
-| F-1 | The stale banner cannot fire while php-fpm is up | **P1** | **open** |
+| F-1 | The stale banner cannot fire while php-fpm is up | **P1** | fixed `a485caf`, awaiting live re-check |
 | F-2 | Every nchan publish was refused `403` | P1 | fixed, `5b10e55` |
 | F-3 | Nudges fired only on a status flip, so never on a healthy fleet | P1 | fixed, `5296e86` |
 | F-4 | Thermal is blind on a box whose disks are unassigned | P1 or P2 | **open, awaiting ruling** |
 | F-5 | Every spare is listed twice | P2 | **open** |
 | F-6 | Card says `OK disk errors` while the table shows 192 | P2 | **open, awaiting ruling** |
-| D-1 | `plugin remove` deletes the `.plg`, so the documented order loses it | doc | **open** |
-| D-2 | The runbook's `rc` path (`/etc/rc.d/…`) does not exist | doc | **open** |
-| D-3 | Building on the box silently depends on node/npm being present | doc | **open** |
+| D-1 | `plugin remove` deletes the `.plg`, so the documented order loses it | doc | fixed `HOWTO.md` + both runbooks |
+| D-2 | The runbook's `rc` path (`/etc/rc.d/…`) does not exist | doc | fixed in the runbook |
+| D-3 | Building on the box silently depends on node/npm being present | doc | documented in `HOWTO.md` |
 
-### F-1 — the stale banner measures the wrong clock (P1, open)
+### F-1 — the stale banner measures the wrong clock (P1, fixed `a485caf`)
 
 Stopping `managerd` for three minutes produced no banner at all. The cards kept
 showing their numbers, and nothing on screen said they had stopped moving.
@@ -98,9 +98,15 @@ never achieved — *"rather than showing stale numbers as though they were
 current."* It passed P0's exit trial too, because nobody stopped the daemon and
 waited.
 
-Fix direction: measure the age of the DATA, not of the request. The payload
-already carries a per-node `last_seen`; a fleet-level newest-sample timestamp
-emitted by the endpoint would let the shell say something true.
+Fixed: `health.php` now reports `newest` (the freshest `last_seen` in the
+fleet) and `age` (its age in seconds), computed against the server's own clock
+so a skewed browser clock cannot banner a healthy fleet or hide a dead daemon.
+Never collected is `null`, never `0`, and an unparseable timestamp is `null`
+too. `App.vue` banners on either clock with a different sentence for each.
+
+Nothing rendered `App.vue` in any harness, which is how this survived two
+phases; `tests/js/views.mjs` now SSR-renders it and asserts the exact Raven
+case. **Awaiting live re-verification** — steps 8b-8d.
 
 ### F-2 — every nchan publish was refused (P1, fixed `5b10e55`)
 

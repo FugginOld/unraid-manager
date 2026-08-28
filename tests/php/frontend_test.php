@@ -59,5 +59,32 @@ $ignore = (string) file_get_contents($root . '/.gitignore');
 check('node_modules is ignored', str_contains($ignore, 'node_modules'));
 check('the built bundle is not committed', str_contains($ignore, 'unraid-manager/ui/'));
 
+/* Every check above passes $tmp, so the no-argument call - the one the live
+   page actually makes - was never executed. Both defaults could be wrong and
+   the whole suite stayed green while the box rendered "not built" forever:
+   mutating um_ui_dir() to ../wrong-ui, or the entry to src/nope.js, left
+   frontend_test AND pages_test at exit 0. Guarded on is_file so it is a no-op
+   without a local build, and mandatory in the frontend CI job, which builds. */
+/* The presence test must NOT go through um_ui_dir(): gating the check on the
+   very function it is meant to pin makes it skip itself the moment that
+   function is wrong, which is fail-open and is how the first version of this
+   check passed a deliberately broken um_ui_dir(). Use the build's real
+   location, spelled out. */
+$builtManifest = __DIR__ . '/../../source/usr/local/emhttp/plugins/unraid-manager'
+               . '/ui/.vite/manifest.json';
+if (is_file($builtManifest)) {
+    $real = um_asset_tags();
+    check('the default ui dir and entry name resolve the real build',
+          !str_contains($real, 'not built'));
+    if (preg_match('#src="' . preg_quote(UM_UI_URL, '#') . '/([^"]+)"#', $real, $m)) {
+        check('the resolved script exists on disk', is_file(um_ui_dir() . '/' . $m[1]));
+    } else {
+        check('the resolved script exists on disk', false);
+    }
+    $mf = json_decode((string) file_get_contents($builtManifest), true);
+    check("the manifest really has the entry the default names",
+          is_array($mf) && array_key_exists('src/main.js', $mf));
+}
+
 echo $fails === 0 ? "frontend: all pass\n" : "frontend: $fails FAILED\n";
 exit($fails === 0 ? 0 : 1);

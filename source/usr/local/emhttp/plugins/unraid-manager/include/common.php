@@ -369,7 +369,10 @@ function um_asset_tags(string $entry = 'src/main.js', ?string $dir = null): stri
     }
 
     $tags = '';
-    foreach ($item['css'] ?? [] as $css) {
+    /* Cast, not a bare ??: a manifest whose css is a scalar would raise
+       'foreach() argument must be of type array|object' - and run.sh exists to
+       fail on exactly that, because an unguarded foreach shipped here once. */
+    foreach ((array) ($item['css'] ?? []) as $css) {
         $tags .= '<link rel="stylesheet" href="' . UM_UI_URL . '/'
                . htmlspecialchars($css) . '">' . "\n";
     }

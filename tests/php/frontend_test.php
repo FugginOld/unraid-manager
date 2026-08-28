@@ -138,8 +138,13 @@ check('useLive registers per-caller teardown or is a module singleton',
 
 /* ── amendment 2B: the stale banner is page-wide ──────────────────────────── */
 check('App.vue imports the live-updates module', str_contains($app, "live.js"));
+/* Match the <nav> tag itself, not the ".um-tabs" CSS selector that also lives
+   in this file's <style> block — matching the selector would let the banner
+   move anywhere in the template (even after <component :is>) and still pass,
+   since the CSS always comes last. */
+$appTemplate = (string) preg_replace('#<style>.*#s', '', $app);
 check('the stale banner is rendered by the shell, above the tabs, not by a view',
-      preg_match('#um-stale-banner.*?um-tabs#s', $app) === 1);
+      preg_match('#um-stale-banner.*?<nav\b#s', $appTemplate) === 1);
 $overviewStub = (string) @file_get_contents($src . '/views/Overview.vue');
 check('the stale banner did not stay behind in Overview.vue',
       !str_contains($overviewStub, 'stale'));

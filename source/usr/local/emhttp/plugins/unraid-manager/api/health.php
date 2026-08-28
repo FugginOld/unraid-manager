@@ -50,6 +50,7 @@ function um_fleet_health(?SQLite3 $db): array {
         };
         $info = $payload('info');
         $array = $payload('array');
+        $noti = $payload('notifications');
 
         $indicators = [];
         foreach ($rows as $name => $row) {
@@ -70,6 +71,11 @@ function um_fleet_health(?SQLite3 $db): array {
         $out['api'] = $info['api'] ?? null;
         $out['hostname'] = $info['hostname'] ?? null;
         $out['booted_at'] = $info['booted_at'] ?? null;
+        /* The P0 Fleet tab carried an unread-notifications column and the
+           Overview replaces that tab, so the counts have to travel with it or
+           the replacement is a downgrade. The daemon has collected them since
+           P0; only health.php was not passing them on. */
+        $out['unread'] = $noti['unread'] ?? null;
         $nodes[] = $out;
     }
 

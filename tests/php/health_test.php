@@ -32,6 +32,10 @@ $info = json_encode(['hostname' => 'Golem', 'unraid' => '7.3.2', 'api' => '4.37.
 $arr  = json_encode(['state' => 'STARTED', 'empty' => false,
                      'capacity' => ['free' => 100, 'used' => 900, 'total' => 1000]]);
 $db->exec("INSERT INTO node_state VALUES('a1b2','info','ok',NULL,'2026-08-27T10:00:00Z','$info')");
+/* parse_notifications' real shape - the P0 Fleet tab showed these counts and
+   the Overview replaces that tab, so losing them would be a downgrade. */
+$noti = json_encode(['unread' => ['alert' => 2, 'warning' => 1, 'info' => 5], 'total' => 8]);
+$db->exec("INSERT INTO node_state VALUES('a1b2','notifications','ok',NULL,'2026-08-27T10:00:00Z','$noti')");
 $db->exec("INSERT INTO node_state VALUES('a1b2','array','ok',NULL,'2026-08-27T10:00:00Z','$arr')");
 
 foreach ([['a1b2','overall','degraded','capacity'], ['a1b2','capacity','warn','90% used'],
@@ -90,6 +94,12 @@ $byId = array_column($out['nodes'], null, 'id');
 check('a warn overall rolls up to degraded', $byId['d4e5']['state'] === 'degraded');
 check('a watch overall rolls up to degraded too', $byId['f6a7']['state'] === 'degraded');
 check('an unrecognised overall value fails closed to unknown', $byId['e5f6']['state'] === 'unknown');
+
+check('unread notification counts travel with the node',
+      ($byId['a1b2']['unread']['alert'] ?? null) === 2
+      && ($byId['a1b2']['unread']['warning'] ?? null) === 1);
+check('a node with no notifications payload reports null, not zero',
+      array_key_exists('unread', $byId['b2c3']) && $byId['b2c3']['unread'] === null);
 
 check('a null db answers empty rather than fataling',
       um_fleet_health(null) === ['fleet' => ['nodes' => 0, 'ok' => 0, 'degraded' => 0,

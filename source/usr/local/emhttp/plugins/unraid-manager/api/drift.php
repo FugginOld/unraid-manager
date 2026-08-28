@@ -9,11 +9,16 @@
 
 require_once __DIR__ . '/../include/common.php';
 
-/* The API exposes php/docker/nginx versions too (tier0-coverage, M1), but our
-   `info` query never requests them and parse_info never parses them - so adding
-   them here would ship two permanently empty rows. Widening the query means
-   recapturing the committed fixtures on a live box; that is a follow-up, not
-   part of P1. */
+/* docs/verification/tier0-coverage.md confirms `info` also exposes php and
+   docker versions, so this list is not a platform limit - it is bounded by
+   what daemon/collector.py's `info` query actually requests:
+   `versions { core { unraid api kernel } }` (collector.py:208-210). Widening
+   it is not done here: tier0-coverage.md records only the GraphQL type names
+   (CoreVersions/PackageVersions), not the field path, and guessing a field
+   name is exactly what made the API answer the whole query with
+   INTERNAL_SERVER_ERROR in P0 - a wrong guess nulls `info`, the fast lane's
+   most important payload, on every node at once. Introspecting `versions`
+   against a live box first is tracked as a Task 10 follow-up. */
 const UM_DRIFT_VERSIONS = ['unraid', 'api', 'kernel'];
 
 function um_drift_payloads(SQLite3 $db, string $domain): array {
@@ -27,12 +32,18 @@ function um_drift_payloads(SQLite3 $db, string $domain): array {
 }
 
 function um_drift_row(string $key, string $kind, array $cells): array {
-    /* A node that has not reported yet is null, and null is excluded from the
-       comparison - otherwise enrolling a node would make every row look
-       divergent for the first thirty seconds. */
+    /* array_filter is what makes this null-safe: a node that has not reported
+       yet is null, and dropping nulls before the comparison is what stops
+       enrolling a node from making every row look divergent for the first
+       thirty seconds. No separate count guard is needed - a $known of 0 or 1
+       elements can never have more than 1 unique value.
+       Default string comparison, not SORT_REGULAR: SORT_REGULAR compares
+       loosely, so "7.3" and "7.30" collapse into one value and a row that
+       actually disagrees reports divergent:false - the worst failure mode
+       on a screen whose entire purpose is showing disagreement. */
     $known = array_values(array_filter($cells, fn($v) => $v !== null));
     return ['key' => $key, 'kind' => $kind, 'cells' => $cells,
-            'divergent' => count($known) > 1 && count(array_unique($known, SORT_REGULAR)) > 1];
+            'divergent' => count(array_unique($known)) > 1];
 }
 
 function um_drift_matrix(?SQLite3 $db): array {
@@ -57,7 +68,12 @@ function um_drift_matrix(?SQLite3 $db): array {
 
     $everySeen = [];
     foreach ($plugins as $list) {
-        foreach ($list['plugins'] ?? [] as $name) $everySeen[$name] = true;
+        /* Same malformed-payload guard as the cell lookup below: a `plugins`
+           field that decoded but is not a list must not even reach foreach,
+           which merely warns and continues on a string but would still be the
+           same unguarded assumption this file is otherwise consistent about. */
+        $seen = is_array($list['plugins'] ?? null) ? $list['plugins'] : [];
+        foreach ($seen as $name) $everySeen[$name] = true;
     }
     ksort($everySeen);
 
@@ -66,8 +82,14 @@ function um_drift_matrix(?SQLite3 $db): array {
         foreach ($nodes as $node) {
             $list = $plugins[$node['id']]['plugins'] ?? null;
             /* Never polled is null; polled and absent is false. The two look
-               identical in a table unless the API distinguishes them. */
-            $cells[$node['id']] = $list === null ? null : in_array($name, $list, true);
+               identical in a table unless the API distinguishes them.
+               A payload whose `plugins` is present but not a list (malformed -
+               not something the current daemon writes, but every other decoded
+               payload in this file is guarded the same way) falls into the
+               same null bucket as never-polled: we do not actually know, and
+               reporting it as absent would claim a certainty the payload does
+               not support. */
+            $cells[$node['id']] = is_array($list) ? in_array($name, $list, true) : null;
         }
         $rows[] = um_drift_row('plugin:' . $name, 'plugin', $cells);
     }

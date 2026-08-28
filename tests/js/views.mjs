@@ -249,7 +249,8 @@ try {
   const htmlDaemonDead = await renderView(App, {
     // The exact Raven case: the endpoint answers fine, the data is 20 minutes
     // old, and nothing has failed from the browser's point of view.
-    data: { ...fleet, newest: '2026-08-28T19:34:38Z', age: 1200 },
+    data: { ...fleet, newest: '2026-08-28T19:34:38Z',
+            newest_local: '2026-08-28 15:34:38 EDT', age: 1200 },
     unreachable: false,
   })
   check('a dead daemon banners even though every request succeeded',
@@ -257,9 +258,23 @@ try {
   check('the banner says what is actually wrong - nothing new was collected',
         /Nothing new has been collected/.test(htmlDaemonDead))
   check('the banner names how old the newest reading is',
-        htmlDaemonDead.includes('20 minutes') && htmlDaemonDead.includes('2026-08-28T19:34:38Z'))
+        htmlDaemonDead.includes('20 minutes'))
+  /* The box's wall clock, not the UTC instant and not the viewer's zone:
+     Unraid runs PHP with date.timezone unset, so the server sends a rendering
+     of its own and the pane must prefer it. */
+  check('the banner shows the time in the zone the server named, not the raw instant',
+        htmlDaemonDead.includes('2026-08-28 15:34:38 EDT')
+        && !htmlDaemonDead.includes('2026-08-28T19:34:38Z'))
   check('the banner does not claim the manager failed to answer, which it did',
         !/has not been able to reach the server/.test(htmlDaemonDead))
+
+  /* No local rendering (an older daemon, a payload missing the field): the raw
+     instant is still better than nothing. */
+  const htmlNoLocal = await renderView(App, {
+    data: { ...fleet, newest: '2026-08-28T19:34:38Z', age: 1200 }, unreachable: false,
+  })
+  check('without a server rendering the banner falls back to the raw instant',
+        htmlNoLocal.includes('2026-08-28T19:34:38Z'))
 
   const htmlFresh = await renderView(App, {
     data: { ...fleet, newest: '2026-08-28T19:34:38Z', age: 12 },

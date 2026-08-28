@@ -37,7 +37,11 @@ const { stale: unreachable, lastGood } = useLive(refresh)
 // hide a dead one. null means nothing has ever been collected - a fleet
 // enrolled a minute ago, which must NOT banner.
 const age = computed(() => data.value?.age ?? null)
-const newest = computed(() => data.value?.newest ?? 'never')
+// The server formats this one, in the BOX's zone: Unraid runs PHP with
+// date.timezone unset, and toLocaleString() here would render the VIEWER's
+// zone, which is only coincidentally the same. Falls back to the raw instant
+// rather than to nothing.
+const newest = computed(() => data.value?.newest_local ?? data.value?.newest ?? 'never')
 const dataStale = computed(() => age.value !== null && age.value * 1000 > STALE_MS)
 const stale = computed(() => unreachable.value || dataStale.value)
 

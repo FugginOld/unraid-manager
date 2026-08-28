@@ -31,6 +31,45 @@ function um_health_rows(SQLite3 $db): array {
    minute ago has no age, and reporting one would banner it. An unparseable
    timestamp is null for the same reason: not knowing the age must not read as
    knowing it is fresh. */
+/* Unraid's PHP runs with date.timezone unset - `date_default_timezone_get()`
+   answers UTC on a box whose clock says EDT (verified on Raven: php said
+   21:36 UTC, `date` said 17:36 EDT). Formatting with date() alone would print
+   every timestamp four hours off and look entirely plausible. The system zone
+   lives in the /etc/localtime symlink, which points into the zoneinfo tree and
+   may be relative. */
+function um_zone_from_link(?string $link): ?string {
+    if (!is_string($link)) return null;
+    $at = strpos($link, 'zoneinfo/');
+    if ($at === false) return null;
+    $zone = substr($link, $at + strlen('zoneinfo/'));
+    return $zone === '' ? null : $zone;
+}
+
+/* $link is injectable so the PRECEDENCE is testable off the box: the symlink
+   wins over date_default_timezone_get(), which is UTC on Unraid and would
+   render every timestamp four hours out. Without the parameter both branches
+   return UTC on a dev machine and no test can tell them apart - dropping the
+   link entirely passed the whole suite. */
+function um_local_timezone(?string $link = null): string {
+    $link = $link ?? @readlink('/etc/localtime');
+    return um_zone_from_link($link) ?? date_default_timezone_get();
+}
+
+/* An operator reads a wall clock, not a UTC instant. The ISO string travels
+   too - one for people, one for machines - because a formatted string is not
+   something anything else should have to parse back. */
+function um_format_local(int $epoch, string $zone): string {
+    try {
+        $tz = new DateTimeZone($zone);
+    } catch (Throwable $e) {
+        /* A zone the box names but PHP does not know must not fatal the whole
+           Overview; UTC clearly labelled is worse than local, better than a
+           500. */
+        $tz = new DateTimeZone('UTC');
+    }
+    return (new DateTimeImmutable('@' . $epoch))->setTimezone($tz)->format('Y-m-d H:i:s T');
+}
+
 function um_fleet_age(array $nodes): array {
     $newest = null;
     foreach ($nodes as $node) {
@@ -40,13 +79,15 @@ function um_fleet_age(array $nodes): array {
         if ($ts === false) continue;
         if ($newest === null || $ts > $newest[0]) $newest = [$ts, (string) $seen];
     }
-    if ($newest === null) return ['newest' => null, 'age' => null];
-    return ['newest' => $newest[1], 'age' => max(0, time() - $newest[0])];
+    if ($newest === null) return ['newest' => null, 'newest_local' => null, 'age' => null];
+    return ['newest' => $newest[1],
+            'newest_local' => um_format_local($newest[0], um_local_timezone()),
+            'age' => max(0, time() - $newest[0])];
 }
 
 function um_fleet_health(?SQLite3 $db): array {
     $empty = ['fleet' => ['nodes' => 0, 'ok' => 0, 'degraded' => 0, 'unknown' => 0],
-              'nodes' => [], 'newest' => null, 'age' => null];
+              'nodes' => [], 'newest' => null, 'newest_local' => null, 'age' => null];
     if ($db === null) return $empty;
 
     $health = um_health_rows($db);

@@ -497,5 +497,16 @@ check('the drift view reads dbUnreadable off the same memoised useEndpoint call'
 check('the drift view does not render a second page-wide stale banner',
       !str_contains($drift, 'um-stale-banner'));
 
+/* NodeDrawer fetches on mount, which SSR never runs, so views.mjs cannot
+   render it with content - this is the one leg of the timezone plumbing a
+   render test cannot reach. Reverting the cell to a raw `fetched_at` left the
+   whole suite green (whole-branch review). Pinned here instead, and the reason
+   is written down rather than left as a silent gap. */
+$drawerCode2 = vue_code_only((string) @file_get_contents($src . '/components/NodeDrawer.vue'));
+check('the drawer renders its per-domain timestamp through the shared formatter',
+      str_contains($drawerCode2, 'localTime(domain.fetched_at'));
+check('the drawer takes the zone and the clock from the shell, not from itself',
+      str_contains($drawerCode2, "inject('um-tz'") && str_contains($drawerCode2, "inject('um-clock12'"));
+
 echo $fails === 0 ? "frontend: all pass\n" : "frontend: $fails FAILED\n";
 exit($fails === 0 ? 0 : 1);

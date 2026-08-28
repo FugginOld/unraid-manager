@@ -266,15 +266,32 @@ const UM_UNRAID_THRESHOLD_KEYS = [
     'critical' => 'capacity_high_water',
 ];
 
-function um_unraid_thresholds(string $path = '/boot/config/plugins/dynamix/dynamix.cfg'): array {
+/* $bounds is REQUIRED, not optional: this reads another plugin's file, and a
+   caller that forgets to range-check would report a fleet warning at 4 C on
+   the settings page while the daemon quietly used 50 - the two halves
+   disagreeing about the same file. daemon/config.py range-checks the same way;
+   settings.php passes UM_THRESHOLDS. */
+function um_unraid_thresholds(array $bounds,
+                              string $path = '/boot/config/plugins/dynamix/dynamix.cfg'): array {
     $display = um_read_ini_file($path)['display'] ?? [];
+    /* Unraid stores its disk temperatures in whatever unit its own Date & Time
+       page names, so on an F-configured box hot="113" means 45 C. Converting
+       before the range check is what stops "follow Unraid" quietly not
+       following on such a box - see daemon/config.py, which does the same. */
+    $fahrenheit = strtoupper(substr((string) ($display['unit'] ?? ''), 0, 1)) === 'F';
     $out = [];
     foreach (UM_UNRAID_THRESHOLD_KEYS as $theirs => $ours) {
         $raw = $display[$theirs] ?? null;
-        /* Another plugin's file: a value that is not a plain integer is
-           dropped, leaving our own default in place, rather than trusted. */
-        if ($raw !== null && $raw !== '' && ctype_digit((string) $raw)) {
-            $out[$ours] = (int) $raw;
+        /* A value that is not a plain integer is dropped, leaving our own
+           default in place, rather than trusted. */
+        if ($raw === null || $raw === '' || !ctype_digit((string) $raw)) continue;
+        $value = (int) $raw;
+        if ($fahrenheit && in_array($ours, ['temp_warn', 'temp_crit'], true)) {
+            $value = (int) round(($value - 32) * 5 / 9);
+        }
+        [$min, $max] = $bounds[$ours] ?? [null, null];
+        if ($min === null || ($value >= $min && $value <= $max)) {
+            $out[$ours] = $value;
         }
     }
     return $out;

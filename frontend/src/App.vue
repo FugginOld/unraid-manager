@@ -54,7 +54,8 @@ const stale = computed(() => unreachable.value || dataStale.value)
 
 function minutesOld (seconds) {
   const mins = Math.floor(seconds / 60)
-  return mins < 60 ? `${mins} minutes` : `${Math.floor(mins / 60)} hours`
+  const plural = (n, unit) => `${n} ${unit}${n === 1 ? '' : 's'}`
+  return mins < 60 ? plural(mins, 'minute') : plural(Math.floor(mins / 60), 'hour')
 }
 </script>
 

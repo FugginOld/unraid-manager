@@ -29,7 +29,7 @@ function um_threshold_defaults(): array {
     foreach (UM_THRESHOLDS as $key => [$min, $max, $default]) {
         $out[$key] = $default;
     }
-    return array_merge($out, um_unraid_thresholds());
+    return array_merge($out, um_unraid_thresholds(UM_THRESHOLDS));
 }
 
 function um_settings_get(): array {
@@ -140,6 +140,22 @@ function um_settings_validate(array $post): array {
     foreach (array_keys($blank) as $key) {
         $stored[$key] = '';
     }
+    if ($thresholds['capacity_watch'] >= $thresholds['capacity_high_water']) {
+        /* Identical rule and identical reasoning to the temperature pair above:
+           a watch level at or above the warning level can never be the one that
+           fires. Without this the page saved 95/90 cleanly, redisplayed it, and
+           config.py silently reset both - the daemon using 80/90 with nothing
+           on screen saying so. */
+        if ($fromFlash['capacity_watch'] && $fromFlash['capacity_high_water']) {
+            $thresholds['capacity_watch'] = $inherited['capacity_watch'];
+            $thresholds['capacity_high_water'] = $inherited['capacity_high_water'];
+        } else {
+            return ['ok' => false, 'error' =>
+                'The capacity warning must be above the watch level, or one of the two '
+                . 'bands can never be reached.', 'values' => []];
+        }
+    }
+
     return ['ok' => true, 'error' => null,
             'values' => ['db_path' => $path, 'poll_fast' => $fast,
                          'poll_slow' => $slow] + $stored];

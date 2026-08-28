@@ -286,22 +286,28 @@ def upsert_health(conn, node_id, indicator, state, value=None, basis=None,
     conn.commit()
 
 
-def read_payload(conn, node_id, domain):
-    """The last stored payload for one domain, decoded, or None.
+def read_state(conn, node_id, domain):
+    """(payload, fetched_at) for one domain. Either may be None.
 
     Health evaluation runs on the FAST lane, but the disk inventory is a slow
     one, so the hottest-disk fallback (health.evaluate_thermal, P1 exit F-4)
     has to reach back for the last one stored rather than wait ten minutes for
     a fresh cycle it will never see.
+
+    fetched_at travels WITH the payload because upsert_state deliberately
+    retains the last good payload across a failed poll: on a node whose disks
+    lane 504s persistently - which is Golem, observed - the retained inventory
+    would otherwise be used forever.
     """
-    row = conn.execute('SELECT payload FROM node_state WHERE node_id=? AND domain=?',
-                       (node_id, domain)).fetchone()
+    row = conn.execute(
+        'SELECT payload, fetched_at FROM node_state WHERE node_id=? AND domain=?',
+        (node_id, domain)).fetchone()
     if row is None or row['payload'] is None:
-        return None
+        return None, None
     try:
-        return json.loads(row['payload'])
+        return json.loads(row['payload']), row['fetched_at']
     except ValueError:
-        return None
+        return None, None
 
 
 def read_health(conn, node_id):

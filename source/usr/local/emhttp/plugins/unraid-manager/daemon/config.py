@@ -98,18 +98,40 @@ def read_unraid_thresholds(path=DYNAMIX_CFG):
     written by another plugin's settings page and is not ours to trust blindly.
     """
     out = {}
-    for _section, key, value in _pairs(path):
+    fahrenheit = False
+    for section, key, value in _pairs(path):
+        # [display] only, which is the section common.php reads. Without this
+        # a `warning=` in any other section of a file neither half owns would
+        # diverge the two readers by file order.
+        if section != 'display':
+            continue
+        if key == 'unit':
+            fahrenheit = value.strip().upper().startswith('F')
+            continue
         ours = UNRAID_THRESHOLD_KEYS.get(key)
         if ours is None:
             continue
-        low, high = THRESHOLD_BOUNDS[ours]
         try:
             number = int(value)
         except (TypeError, ValueError):
             continue
-        if low <= number <= high:
-            out[ours] = number
-    return out
+        out[ours] = number
+
+    # Unraid stores its disk temperatures in whatever unit its Date & Time
+    # page names, so on an F-configured box `hot="113"` means 45 C. Without
+    # this it fails the 20-99 bound and is silently discarded, and "follow
+    # Unraid's Disk Settings" quietly does not - which is worse than not
+    # offering to follow them at all.
+    if fahrenheit:
+        for key in ('temp_warn', 'temp_crit'):
+            if key in out:
+                out[key] = int(round((out[key] - 32) * 5.0 / 9.0))
+
+    # Range-checked LAST, after any conversion. Another plugin's file is not
+    # ours to trust: a value outside the band leaves our own default in place
+    # rather than producing a threshold that can never fire.
+    return {k: v for k, v in out.items()
+            if THRESHOLD_BOUNDS[k][0] <= v <= THRESHOLD_BOUNDS[k][1]}
 
 
 def read_manager_cfg(path=MANAGER_CFG, dynamix_path=DYNAMIX_CFG):
@@ -140,16 +162,21 @@ def read_manager_cfg(path=MANAGER_CFG, dynamix_path=DYNAMIX_CFG):
     for key, (low, high) in THRESHOLD_BOUNDS.items():
         if not low <= cfg[key] <= high:
             cfg[key] = defaults[key]
+    # Both guards fall back to OUR OWN constants, never to `defaults`:
+    # `defaults` already carries Unraid's values, so an inversion that came
+    # from dynamix.cfg would be "refused" by restoring the very pair that was
+    # inverted. A nonsensical pair from another plugin's file is exactly as
+    # unusable as one typed into ours.
     if cfg['temp_crit'] <= cfg['temp_warn']:
         # An inverted pair makes one of the two bands unreachable. Refuse the
         # pair rather than silently keeping half of a nonsensical setting.
-        cfg['temp_warn'] = defaults['temp_warn']
-        cfg['temp_crit'] = defaults['temp_crit']
+        cfg['temp_warn'] = MANAGER_DEFAULTS['temp_warn']
+        cfg['temp_crit'] = MANAGER_DEFAULTS['temp_crit']
     if cfg['capacity_watch'] >= cfg['capacity_high_water']:
         # Same rule for the capacity pair: a watch band at or above the
         # high-water mark can never be the one that fires.
-        cfg['capacity_watch'] = defaults['capacity_watch']
-        cfg['capacity_high_water'] = defaults['capacity_high_water']
+        cfg['capacity_watch'] = MANAGER_DEFAULTS['capacity_watch']
+        cfg['capacity_high_water'] = MANAGER_DEFAULTS['capacity_high_water']
     return cfg
 
 

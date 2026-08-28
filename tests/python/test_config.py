@@ -1,4 +1,5 @@
 import os
+import re
 import tempfile
 import unittest
 
@@ -82,6 +83,46 @@ class TestManagerCfg(unittest.TestCase):
         self.assertEqual(45, cfg['temp_warn'])
         self.assertEqual(55, cfg['temp_crit'])
 
+    def test_an_inverted_pair_from_unraid_is_refused_too(self):
+        # The guard falls back to OUR constants, never to `defaults` - which
+        # already carries Unraid's values, so falling back there would "refuse"
+        # an inversion by restoring the very pair that was inverted.
+        dyn = self._dynamix('[display]\nhot="55"\nmax="45"\n'
+                            'warning="95"\ncritical="90"\n')
+        cfg = config.read_manager_cfg(os.path.join(self.dir, 'nope.cfg'), dynamix_path=dyn)
+        self.assertEqual(50, cfg['temp_warn'])
+        self.assertEqual(60, cfg['temp_crit'])
+        self.assertEqual(80, cfg['capacity_watch'])
+        self.assertEqual(90, cfg['capacity_high_water'])
+
+    def test_an_inverted_capacity_pair_from_our_own_cfg_is_refused(self):
+        # The temperature pair had this test; the capacity pair had none, and
+        # the guard could be deleted outright with the suite green.
+        path = os.path.join(self.dir, 'manager.cfg')
+        with open(path, 'w', encoding='utf-8') as fh:
+            fh.write('capacity_watch=95\ncapacity_high_water=90\n')
+        cfg = config.read_manager_cfg(path,
+                                      dynamix_path=os.path.join(self.dir, 'none.cfg'))
+        self.assertEqual(80, cfg['capacity_watch'])
+        self.assertEqual(90, cfg['capacity_high_water'])
+
+    def test_a_fahrenheit_box_has_its_thresholds_converted(self):
+        # Unraid stores hot/max in whatever unit its own page names. Discarding
+        # 113 as out-of-range would make "follow Unraid" quietly not, which is
+        # worse than not offering to follow at all.
+        dyn = self._dynamix('[display]\nunit="F"\nhot="113"\nmax="131"\n')
+        cfg = config.read_manager_cfg(os.path.join(self.dir, 'nope.cfg'), dynamix_path=dyn)
+        self.assertEqual(45, cfg['temp_warn'])
+        self.assertEqual(55, cfg['temp_crit'])
+
+    def test_only_the_display_section_is_read(self):
+        # common.php reads ['display'] only; without the same filter here a key
+        # of the same name in another section would diverge the two readers by
+        # file order, on a file neither of them owns.
+        dyn = self._dynamix('[display]\nhot="45"\n[somethingelse]\nhot="99"\n')
+        cfg = config.read_manager_cfg(os.path.join(self.dir, 'nope.cfg'), dynamix_path=dyn)
+        self.assertEqual(45, cfg['temp_warn'])
+
     def test_an_out_of_range_unraid_value_is_ignored(self):
         # Another plugin's file. A nonsense value must leave our own default in
         # place rather than produce a threshold that can never fire.
@@ -101,6 +142,31 @@ class TestManagerCfg(unittest.TestCase):
     def test_comments_ignored(self):
         p = self.write('manager.cfg', '# a comment\npoll_fast=45\n')
         self.assertEqual(45, config.read_manager_cfg(p)['poll_fast'])
+
+
+class TestUnraidKeyMirror(unittest.TestCase):
+    """UNRAID_THRESHOLD_KEYS <-> UM_UNRAID_THRESHOLD_KEYS.
+
+    The comments on both call them deliberate mirrors, and the older mirror
+    (THRESHOLD_BOUNDS <-> UM_THRESHOLDS) has had a test since Task 4. This one
+    had none, and it is the map that decides which of another plugin's settings
+    this daemon obeys - a silent divergence would have the page reporting one
+    inherited value while the daemon used another.
+    """
+
+    def test_both_halves_map_the_same_keys(self):
+        php = os.path.join(os.path.dirname(__file__), '..', '..', 'source', 'usr',
+                           'local', 'emhttp', 'plugins', 'unraid-manager',
+                           'include', 'common.php')
+        with open(php, encoding='utf-8') as fh:
+            text = fh.read()
+        block = re.search(r'UM_UNRAID_THRESHOLD_KEYS\s*=\s*\[(.*?)\];', text, re.S)
+        self.assertIsNotNone(block, 'the PHP mirror is gone or was renamed')
+        pairs = dict(re.findall(r"'(\w+)'\s*=>\s*'(\w+)'", block.group(1)))
+        self.assertEqual(len(config.UNRAID_THRESHOLD_KEYS), len(pairs),
+                         'parsed %d php rows, expected %d'
+                         % (len(pairs), len(config.UNRAID_THRESHOLD_KEYS)))
+        self.assertEqual(config.UNRAID_THRESHOLD_KEYS, pairs)
 
 
 class TestNodesCfg(unittest.TestCase):

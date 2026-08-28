@@ -214,6 +214,48 @@ class TestThermalOnAnEmptyArray(HealthCycleCase):
         self.assertEqual(health.UNKNOWN, self.health('thermal')['state'])
         self.assertEqual('ok', self.health('overall')['state'])
 
+    def test_a_stale_inventory_is_not_used_to_judge_a_temperature(self):
+        """upsert_state retains the last good payload across a failed poll.
+
+        Golem's disks lane 504s persistently (P1 exit F-9), so without an age
+        bound a reading from a disk that has since been pulled would hold
+        thermal at WARN forever: the proposal never changes, so hysteresis can
+        never clear it, and the failing slow-lane domain contributes nothing to
+        the fast-lane rollup that would explain why.
+        """
+        store.upsert_state(self.conn, 'a1b2', 'disks', 'ok',
+                           payload={'disks': [{'device': '/dev/sda', 'temp': 61}]},
+                           fetched_at='2020-01-01T00:00:00Z')
+        m = self._empty_array_manager()
+        m.run_cycle('a1b2', collector.FAST, 1000.0)
+        row = self.health('thermal')
+        self.assertEqual(health.UNKNOWN, row['state'],
+                         'a years-old inventory must not decide a temperature')
+        self.assertNotIn('61', str(row['value']))
+
+    def test_an_undateable_inventory_is_not_used_either(self):
+        # A payload we cannot date is one we cannot vouch for. Treating "no
+        # timestamp" as "current" is the same fail-open the age bound exists to
+        # close - and it is reachable: upsert_state stores fetched_at only for
+        # a poll that succeeded.
+        store.upsert_state(self.conn, 'a1b2', 'disks', 'unknown',
+                           payload={'disks': [{'device': '/dev/sda', 'temp': 61}]},
+                           error='HTTP 504', fetched_at=None)
+        m = self._empty_array_manager()
+        m.run_cycle('a1b2', collector.FAST, 1000.0)
+        self.assertEqual(health.UNKNOWN, self.health('thermal')['state'])
+
+    def test_a_recent_inventory_is_still_used(self):
+        # The other side of the bound: one missed slow poll is ordinary, and
+        # dropping to array-only on the first miss would flap an empty-array
+        # box between a real temperature and "unknown" every ten minutes.
+        store.upsert_state(self.conn, 'a1b2', 'disks', 'ok',
+                           payload={'disks': [{'device': '/dev/sda', 'temp': 41}]},
+                           fetched_at=store.utcnow())
+        m = self._empty_array_manager()
+        m.run_cycle('a1b2', collector.FAST, 1000.0)
+        self.assertEqual(41, self.health('thermal')['value'])
+
     def test_the_stored_disk_inventory_is_used_when_the_array_has_no_disks(self):
         """P1 exit F-4, at the level that actually shipped broken.
 
@@ -226,7 +268,8 @@ class TestThermalOnAnEmptyArray(HealthCycleCase):
         """
         store.upsert_state(self.conn, 'a1b2', 'disks', 'ok', payload={
             'disks': [{'device': '/dev/sda', 'temp': 37},
-                      {'device': '/dev/sdb', 'temp': 41}]})
+                      {'device': '/dev/sdb', 'temp': 41}]},
+            fetched_at=store.utcnow())
         m = self._empty_array_manager()
         m.run_cycle('a1b2', collector.FAST, 1000.0)
         row = self.health('thermal')
@@ -237,3 +280,40 @@ class TestThermalOnAnEmptyArray(HealthCycleCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TestThresholdsReachTheEvaluator(HealthCycleCase):
+    """Every threshold config resolves must actually be handed to health.
+
+    HEALTH_THRESHOLDS is that hand-off, and a key missing from it is dropped
+    silently while the evaluator falls back to its own constant. capacity_watch
+    shipped dead exactly that way for a whole branch: config.py resolved it
+    from Unraid's Disk Settings, the pure function honoured it, and nothing in
+    between passed it along - with the pure-function test green throughout.
+    """
+
+    def test_every_key_config_resolves_is_forwarded(self):
+        import config
+        missing = set(config.THRESHOLD_BOUNDS) - set(managerd.Manager.HEALTH_THRESHOLDS)
+        self.assertEqual(set(), missing,
+                         'these thresholds are configurable but never reach health.evaluate')
+
+    def test_the_capacity_watch_level_changes_the_verdict(self):
+        # The Golem capture is 93.3% full: above a 70 watch, below a 99 warn.
+        # Two cycles because the first sighting only arms the counter.
+        m = self.manager()
+        m.cfg['capacity_watch'] = 70
+        m.cfg['capacity_high_water'] = 99
+        m.run_cycle('a1b2', collector.FAST, 1000.0)
+        m.run_cycle('a1b2', collector.FAST, 1030.0)
+        self.assertEqual('watch', self.health('capacity')['state'])
+
+    def test_a_high_watch_level_leaves_the_same_fleet_ok(self):
+        # The other direction, so the test above cannot pass on a constant.
+        m = self.manager()
+        m.cfg['capacity_watch'] = 95
+        m.cfg['capacity_high_water'] = 99
+        m.run_cycle('a1b2', collector.FAST, 1000.0)
+        m.run_cycle('a1b2', collector.FAST, 1030.0)
+        self.assertEqual('ok', self.health('capacity')['state'])
+

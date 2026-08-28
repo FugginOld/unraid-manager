@@ -116,6 +116,15 @@ class TestThermal(unittest.TestCase):
                            {'device': '/dev/sdb', 'temp': 41},
                            {'device': '/dev/sdc', 'temp': None}]}
 
+    def test_the_inventory_shape_matches_what_the_collector_produces(self):
+        # INVENTORY below is hand-written, and a hand-invented field name is
+        # what produced the 0-of-72 join and F-4 itself. Pin the shape against
+        # a real capture rather than against my memory of it.
+        import collector
+        real = collector.parse_disks(context.fixture_json('seed/disks.json')['data'])
+        self.assertIsNotNone(health._hottest_physical(real),
+                             'the collector output must carry a readable temperature')
+
     def test_unassigned_disks_are_still_watched(self):
         out = health.evaluate_thermal(array_payload('seed/array_empty.json'), self.T,
                                       self.INVENTORY)

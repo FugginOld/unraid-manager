@@ -100,7 +100,7 @@ critical=\"90\"
 hotssd=\"60\"
 unit=\"C\"
 ");
-$unraid = um_unraid_thresholds($dynDir . '/dynamix.cfg');
+$unraid = um_unraid_thresholds(UM_THRESHOLDS, $dynDir . '/dynamix.cfg');
 check('the Unraid disk temperature thresholds map onto ours',
       $unraid['temp_warn'] === 45 && $unraid['temp_crit'] === 55);
 check('the Unraid utilization thresholds map onto ours',
@@ -111,13 +111,57 @@ check('the Unraid utilization thresholds map onto ours',
 check('the SSD-specific thresholds are not borrowed for every disk',
       !array_key_exists('temp_warn_ssd', $unraid) && count($unraid) === 4);
 check('a missing dynamix.cfg is simply no opinion, not an error',
-      um_unraid_thresholds($dynDir . '/nope.cfg') === []);
+      um_unraid_thresholds(UM_THRESHOLDS, $dynDir . '/nope.cfg') === []);
 file_put_contents($dynDir . '/junk.cfg', "[display]
 hot=\"warm-ish\"
 max=\"\"
 ");
 check('a non-numeric value from another plugins file is ignored, not trusted',
-      um_unraid_thresholds($dynDir . '/junk.cfg') === []);
+      um_unraid_thresholds(UM_THRESHOLDS, $dynDir . '/junk.cfg') === []);
+
+/* The two halves read the SAME file and must agree about it. daemon/config.py
+   range-checks against THRESHOLD_BOUNDS; without the same check here the page
+   reported "inherited: 4 C" while the daemon used 50 - one box, two answers,
+   which is the defect F-8 set out to remove. */
+file_put_contents($dynDir . '/wild.cfg', "[display]
+hot=\"4\"
+max=\"500\"
+");
+check('an out-of-range value from another plugins file is dropped, as python drops it',
+      um_unraid_thresholds(UM_THRESHOLDS, $dynDir . '/wild.cfg') === []);
+
+/* Unraid stores hot/max in whatever unit its own page names. Discarding 113 as
+   out-of-range would make "follow Unraid" quietly not follow on an F box. */
+file_put_contents($dynDir . '/f.cfg', "[display]
+unit=\"F\"
+hot=\"113\"
+max=\"131\"
+");
+$f = um_unraid_thresholds(UM_THRESHOLDS, $dynDir . '/f.cfg');
+check('a fahrenheit box has its thresholds converted, not discarded',
+      $f['temp_warn'] === 45 && $f['temp_crit'] === 55);
+
+/* The capacity pair now gets the refusal the temperature pair always had.
+   Saved 95/90 cleanly before this, then config.py silently reset both. */
+$inverted = um_settings_validate(array_merge($good,
+    ['capacity_watch' => '95', 'capacity_high_water' => '90']));
+check('an inverted capacity pair is refused, the way an inverted temperature pair is',
+      $inverted['ok'] === false && str_contains((string) $inverted['error'], 'capacity'));
+
+/* The clock preference: the pure predicate was pinned, the READ was not, so
+   the whole body of um_display_clock_12h could be replaced with `return false`
+   and the suite stayed green. */
+file_put_contents($dynDir . '/12h.cfg', "[display]
+time=\"%I:%M %p\"
+");
+file_put_contents($dynDir . '/24h.cfg', "[display]
+time=\"%R\"
+");
+check('the clock preference is actually read out of the file',
+      um_display_clock_12h($dynDir . '/12h.cfg') === true
+      && um_display_clock_12h($dynDir . '/24h.cfg') === false);
+@unlink($dynDir . '/wild.cfg'); @unlink($dynDir . '/f.cfg');
+@unlink($dynDir . '/12h.cfg'); @unlink($dynDir . '/24h.cfg');
 @unlink($dynDir . '/dynamix.cfg'); @unlink($dynDir . '/junk.cfg'); @rmdir($dynDir);
 
 /* A hand-edited manager.cfg must not be able to make the Settings page
@@ -200,8 +244,12 @@ check('the degenerate pair at the shared min names the inversion, not a bound',
           array_merge($good, ['temp_warn' => '20', 'temp_crit' => '20']))['error']), 'critical'));
 check('capacity_high_water one below min is refused',
       um_settings_validate(array_merge($good, ['capacity_high_water' => '49']))['ok'] === false);
+/* The watch level travels with it: 50 is a legal high-water mark, but not
+   while the watch level sits at the inherited 80 - that is the inverted pair
+   the rule above refuses, and submitting half a pair is what would trip it. */
 check('capacity_high_water at min is accepted',
-      um_settings_validate(array_merge($good, ['capacity_high_water' => '50']))['ok'] === true);
+      um_settings_validate(array_merge($good, ['capacity_high_water' => '50',
+                                               'capacity_watch' => '40']))['ok'] === true);
 check('capacity_high_water at max is accepted',
       um_settings_validate(array_merge($good, ['capacity_high_water' => '99']))['ok'] === true);
 check('capacity_high_water one above max is refused',

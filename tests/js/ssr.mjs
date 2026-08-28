@@ -119,8 +119,16 @@ export function createCompiler ({ stubs = {} } = {}) {
     return (await import(pathToFileURL(out).href)).default
   }
 
-  async function render (component, props) {
-    return renderedTextOnly(await renderToString(createSSRApp(component, props)))
+  /* `provides` renders a component the way App.vue would host it. Without it
+     a component that inject()s can only ever be rendered standalone, where the
+     injection falls back to its default - so deleting the provide() that feeds
+     it in production leaves every test green. That happened: the whole
+     timezone/clock leg through NodeCard and NodeDrawer was revertible to raw
+     UTC with the suite passing. */
+  async function render (component, props, provides) {
+    const app = createSSRApp(component, props)
+    for (const [key, value] of Object.entries(provides || {})) app.provide(key, value)
+    return renderedTextOnly(await renderToString(app))
   }
 
   return { compileSFCFile, load, render, cleanup: () => fs.rmSync(cacheDir, { recursive: true, force: true }) }

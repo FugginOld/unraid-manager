@@ -57,10 +57,10 @@ const ssr = createCompiler({
    be in place before the render, not passed as a prop: these are views, not
    components - they take their data from the endpoint, which is the whole
    thing under test. */
-async function renderView (component, fixture) {
+async function renderView (component, fixture, provides) {
   globalThis.__um_fixture = fixture
   try {
-    return await ssr.render(component)
+    return await ssr.render(component, undefined, provides)
   } finally {
     globalThis.__um_fixture = undefined
   }
@@ -327,6 +327,30 @@ try {
                                                dbUnreadable: true })
   check('an unreadable database still gets its own banner',
         /um-db-banner/.test(htmlShellNoDb))
+
+  /* ── the provide/inject leg (whole-branch review) ───────────────────────
+     Every check above renders App.vue with no nodes, and node_card.mjs renders
+     a card STANDALONE where the injection falls back to its default - so both
+     provide() calls in App.vue could be deleted, and NodeDrawer reverted to a
+     raw fetched_at, with the entire suite green. The cards are where an
+     operator actually reads a timestamp. */
+  const NODE = {
+    id: 'n1', name: 'Raven', state: 'ok', since: null, array_state: 'started',
+    array_empty: true, capacity: null, unraid: '7.3.2', api: '4.37.3',
+    booted_at: null, last_seen: '2026-08-28T19:34:38Z', unread: null, indicators: {},
+  }
+  const htmlWithCard = await renderView(App, {
+    data: { ...fleet, nodes: [NODE], newest: '2026-08-28T19:34:38Z', age: 12,
+            tz: 'America/New_York', clock12: true },
+  })
+  check('a card inside the shell renders its last-seen in the fleet timezone',
+        htmlWithCard.includes('3:34:38 PM') && !htmlWithCard.includes('19:34:38'))
+  check('the card gets the clock preference too, not just the zone',
+        !htmlWithCard.includes('15:34:38'))
+
+  /* NodeDrawer fetches on mount, which SSR never runs, so it cannot be
+     rendered with content here. Its cell is pinned in frontend_test.php
+     instead - stated rather than left as a silent gap. */
 } finally {
   ssr.cleanup()
 }

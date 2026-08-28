@@ -393,8 +393,37 @@ class Manager(object):
             self._publish({'node_id': node_id, 'domains': changed, 'ts': stamp})
         return changed
 
-    HEALTH_THRESHOLDS = ('capacity_high_water', 'temp_warn', 'temp_crit',
-                         'error_window_min')
+    # Every threshold health.evaluate() reads. A key missing here is silently
+    # dropped on the way in and the evaluator falls back to its own constant -
+    # which is how capacity_watch shipped dead for a whole branch: config.py
+    # resolved it from Unraid's Disk Settings, the pure function honoured it,
+    # and nothing in between passed it along.
+    HEALTH_THRESHOLDS = ('capacity_high_water', 'capacity_watch', 'temp_warn',
+                         'temp_crit', 'error_window_min')
+
+    # How many slow-lane intervals a retained disk inventory may be behind
+    # before thermal stops believing it. Three rather than one: a single missed
+    # slow poll is ordinary (Query.disks 504s under load, by design), and
+    # dropping to array-only on the first miss would flap an empty-array box
+    # between a real temperature and "unknown" every ten minutes.
+    INVENTORY_STALE_AFTER = 3
+
+    def _inventory_is_current(self, collected_at, stamp):
+        """Is a retained payload recent enough to judge a temperature on?
+
+        No timestamp at all is NOT current: a payload we cannot date is one we
+        cannot vouch for, and the safe direction here is to say we do not know
+        rather than to warn on a reading of unknown age.
+        """
+        if not collected_at:
+            return False
+        try:
+            then = datetime.datetime.strptime(collected_at, '%Y-%m-%dT%H:%M:%SZ')
+            now = datetime.datetime.strptime(stamp, '%Y-%m-%dT%H:%M:%SZ')
+        except (TypeError, ValueError):
+            return False
+        limit = self.INVENTORY_STALE_AFTER * int(self.cfg.get('poll_slow') or 600)
+        return 0 <= (now - then).total_seconds() <= limit
 
     def _update_health(self, node_id, results, stamp):
         """Evaluate this cycle's payloads, debounce, and persist. Returns the
@@ -432,7 +461,17 @@ class Manager(object):
             # and a box whose disks are all unassigned has no thermal
             # monitoring at all (P1 exit F-4: Raven, eleven disks at 33-40 C,
             # card reading "no disk temperature reported").
-            payloads.setdefault('disks', store.read_payload(self.conn, node_id, 'disks'))
+            #
+            # ...but only while it is still current. upsert_state retains the
+            # last good payload across a failed poll, and Golem's disks lane
+            # 504s persistently (F-9), so an unbounded reach-back would let a
+            # reading from a disk that has since been pulled hold thermal at
+            # WARN forever: the proposal never changes, so hysteresis can never
+            # clear it, and the failing slow domain contributes nothing to the
+            # fast-lane rollup that would otherwise explain why.
+            inventory, collected_at = store.read_state(self.conn, node_id, 'disks')
+            if inventory is not None and self._inventory_is_current(collected_at, stamp):
+                payloads.setdefault('disks', inventory)
 
             indicators = health.evaluate(payloads, thresholds, errors_history)
             settled = {}

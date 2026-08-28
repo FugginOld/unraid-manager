@@ -14,6 +14,20 @@ function check(string $name, bool $ok): void {
     if (!$ok) $fails++;
 }
 
+/* Pins must look at CODE, not at the prose explaining the code - the same
+   problem policy_test.php's php_code_only()/py_code_only() solve for PHP and
+   Python. .vue/.js source has no PHP tokenizer to lean on, so this strips the
+   three comment forms actually used in this tree: HTML/Vue-template comments,
+   JS/CSS block comments, and JS line comments. Fix round 1 found two checks
+   in this file pinned by a comment's prose rather than by the branch it was
+   explaining. */
+function vue_code_only(string $src): string {
+    $src = preg_replace('/<!--.*?-->/s', '', $src);
+    $src = preg_replace('#/\*.*?\*/#s', '', $src);
+    $src = preg_replace('#//[^\n]*#', '', $src);
+    return $src;
+}
+
 /* A manifest in a temp tree, so this test never depends on a build having run. */
 $tmp = sys_get_temp_dir() . '/um_ui_' . getmypid();
 @mkdir($tmp . '/.vite', 0700, true);
@@ -256,25 +270,69 @@ $overview = (string) @file_get_contents($src . '/views/Overview.vue');
 $card     = (string) @file_get_contents($src . '/components/NodeCard.vue');
 $drawer   = (string) @file_get_contents($src . '/components/NodeDrawer.vue');
 
-check('overview reads the health endpoint', str_contains($overview, "'health'"));
-check('overview shows a fleet summary line', str_contains($overview, 'fleet'));
-check('overview handles having no nodes at all', str_contains($overview, 'No nodes'));
+/* Comment-stripped from here on (fix round 1, item 2): every check below
+   reads $overviewCode/$cardCode/$drawerCode or a template slice of one of
+   them, never the raw file, so a check can never be satisfied by the prose
+   explaining a branch instead of the branch itself. */
+$overviewCode = vue_code_only($overview);
+$cardCode     = vue_code_only($card);
+$drawerCode   = vue_code_only($drawer);
+$overviewTemplate = (string) preg_replace('/^[\s\S]*?<template>|<\/template>[\s\S]*$/', '', $overviewCode);
+$cardTemplate     = (string) preg_replace('/^[\s\S]*?<template>|<\/template>[\s\S]*$/', '', $cardCode);
+
+check('overview reads the health endpoint', str_contains($overviewCode, "'health'"));
+check('overview shows a fleet summary line', str_contains($overviewCode, 'fleet'));
+check('overview handles having no nodes at all', str_contains($overviewCode, 'No nodes'));
 /* Task 12 moved the stale banner to App.vue so it covers every tab (Controller
    amendment C). Overview.vue must NOT grow a second one - frontend_test.php
    already pins this from the App.vue side ('the stale banner did not stay
    behind in Overview.vue'); this is the same invariant asserted here too. */
 check('overview does not render its own stale banner (Task 12 amendment C owns it in App.vue)',
-      !str_contains($overview, 'stale'));
+      !str_contains($overviewCode, 'stale'));
 
-check('the card shows capacity as a bar', str_contains($card, 'um-capbar'));
-check('an empty array is labelled, not shown as 0%', str_contains($card, 'empty array'));
-check('the card lists the indicators', str_contains($card, 'indicators'));
-check('the card shows how long the state has held', str_contains($card, 'since'));
+/* ── fix round 1, item 3: the checks must pin that a screen exists ───────── */
+/* Reading NodeCard.vue/NodeDrawer.vue directly for their own checks proves
+   those files contain the right words, never that Overview.vue actually
+   composes them. Deleting <NodeCard>, <NodeDrawer> or useLive(refresh) from
+   Overview.vue left all fifteen prior checks green. */
+check('the overview actually mounts NodeCard and NodeDrawer, not just imports them',
+      (bool) preg_match('/<NodeCard\b/', $overviewTemplate)
+      && (bool) preg_match('/<NodeDrawer\b/', $overviewTemplate));
+check('the overview subscribes to live updates via useLive(refresh)',
+      (bool) preg_match('/\buseLive\s*\(\s*refresh\s*\)/', $overviewCode));
 
-check('the drawer closes on escape', str_contains($drawer, 'Escape'));
-check('the drawer shows per-domain detail', str_contains($drawer, 'domains'));
+/* ── fix round 1, item 6: a loading state before the first response ──────── */
+check('overview shows a loading state before the first response arrives',
+      (bool) preg_match('/v-if="\s*!\s*data\s*&&\s*loading\s*"/', $overviewTemplate));
+
+/* ── fix round 1, item 7: an unreadable database must not also print wrong
+   fleet-empty advice underneath App.vue's own "could not be read" banner ─── */
+check('overview reads loading and dbUnreadable off the same memoised useEndpoint(\'health\') call',
+      (bool) preg_match('/\{(?=[^}]*\bloading\b)(?=[^}]*\bdbUnreadable\b)[^}]*\}\s*=\s*useEndpoint\(/', $overviewCode));
+check('the fleet summary line is suppressed when the database is unreadable',
+      (bool) preg_match('/v-if="\s*fleet\s*&&\s*!\s*dbUnreadable\s*"/', $overviewTemplate));
+check('the "no nodes enrolled" empty state is suppressed when the database is unreadable',
+      (bool) preg_match('/v-if="\s*data\s*&&\s*!\s*dbUnreadable\s*&&\s*!\s*nodes\.length\s*"/', $overviewTemplate));
+
+check('the card shows capacity as a bar', str_contains($cardCode, 'um-capbar'));
+/* fix round 1, item 2: was str_contains($card, 'empty array'), which the
+   comment above the branch satisfied on its own - deleting the whole
+   v-if="node.array_empty" branch and making percent() return 0 for
+   total===0 left this green, i.e. it pinned nothing on Raven's actual
+   regression. Bind the label to its condition instead. */
+check('an empty array is labelled, not shown as 0%',
+      (bool) preg_match('/v-if="node\.array_empty"[\s\S]{0,120}empty array/', $cardTemplate));
+check('the card lists the indicators', str_contains($cardCode, 'indicators'));
+check('the card shows how long the state has held', str_contains($cardCode, 'since'));
+
+check('the drawer closes on escape', str_contains($drawerCode, 'Escape'));
+check('the drawer shows per-domain detail', str_contains($drawerCode, 'domains'));
 check('the drawer never asks for a key',
-      !preg_match('/\bkey\s*:/', $drawer) && !preg_match('/[?&]key=/', $drawer));
+      !preg_match('/\bkey\s*:/', $drawerCode) && !preg_match('/[?&]key=/', $drawerCode));
+/* fix round 1, item 8: a hard-failed domain must read as an error, not a
+   warning - fleet.js said "Error", the Vue drawer collapsed it into 'warn'. */
+check('the drawer shows a hard-failed domain as distinct from a mere warning',
+      (bool) preg_match('/domain\.status\s*===\s*[\'"]error[\'"]\s*\?\s*[\'"](?!warn[\'"])\w+[\'"]/', $drawerCode));
 
 /* ── amendment A: unread notification counts, null distinct from zero ────────
    The P0 Fleet tab carried an alert/warning/info column. `null` means "we have
@@ -283,11 +341,10 @@ check('the drawer never asks for a key',
    warn · 0 info" for both cases - collapsing exactly the distinction the
    amendment exists to preserve. Assert there are two genuinely different
    render paths, not one path with a fallback. */
-$cardTemplate = (string) preg_replace('/^[\s\S]*?<template>|<\/template>[\s\S]*$/', '', $card);
 check('the card renders the unread alert/warning/info breakdown when the payload is present',
-      (bool) preg_match('/unread[\s\S]{0,40}\.alert/', $card)
-      && (bool) preg_match('/unread[\s\S]{0,40}\.warning/', $card)
-      && (bool) preg_match('/unread[\s\S]{0,40}\.info/', $card));
+      (bool) preg_match('/unread[\s\S]{0,40}\.alert/', $cardCode)
+      && (bool) preg_match('/unread[\s\S]{0,40}\.warning/', $cardCode)
+      && (bool) preg_match('/unread[\s\S]{0,40}\.info/', $cardCode));
 check('the card has a distinct "we have not heard" branch for unread === null, styled unknown',
       (bool) preg_match('/v-if="node\.unread"[\s\S]{0,300}v-else[\s\S]{0,120}um-unknown/', $cardTemplate));
 /* The two branches must actually be siblings gated on the same node.unread
@@ -297,8 +354,18 @@ check('the present/unknown unread branches are if/else on node.unread, not two i
       (bool) preg_match('/v-if="node\.unread"[\s\S]{0,300}v-else(?!-if)/', $cardTemplate));
 
 /* ── amendment B: the Unraid API version travels alongside the OS version ──── */
+/* fix round 1, item 4: was …node\.unraid…node\.api\b…, satisfied by the
+   v-if="node.unraid || node.api" GATE alone - dropping the actual
+   "/ API {{ node.api }}" interpolation still passed. Require the
+   interpolation itself, not just a mention of node.api anywhere nearby. */
 check('the card shows the Unraid API version, not only the OS version',
-      (bool) preg_match('/node\.unraid[\s\S]{0,80}node\.api\b/', $cardTemplate));
+      (bool) preg_match('/\{\{\s*node\.api\b/', $cardTemplate));
+
+/* ── fix round 1, item 8: the two other minor UI regressions worth pinning ── */
+check('the card activates on Space as well as Enter (role="button" requires both)',
+      str_contains($cardCode, "@keydown.space"));
+check('"last seen never" gets the same um-unknown treatment fleet.js gave it',
+      (bool) preg_match('/:class="\{[^}]*um-unknown[^}]*!\s*node\.last_seen[^}]*\}"[^>]*>\s*last seen/', $cardTemplate));
 
 echo $fails === 0 ? "frontend: all pass\n" : "frontend: $fails FAILED\n";
 exit($fails === 0 ? 0 : 1);

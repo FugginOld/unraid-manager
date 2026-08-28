@@ -160,13 +160,38 @@ class TestOverall(HealthCycleCase):
 
 
 class TestThermalOnAnEmptyArray(HealthCycleCase):
-    def test_no_temperature_does_not_make_the_node_unknown(self):
+    def _empty_array_manager(self):
         data = dict(FAST_DATA, array=context.fixture_json('seed/array_empty.json')['data'])
         by_query = {collector.DOMAINS[n].query: d for n, d in data.items()}
-        m = self.manager(post_fn=lambda a, p, k, q, t: by_query[q])
+        return self.manager(post_fn=lambda a, p, k, q, t: by_query[q])
+
+    def test_no_temperature_does_not_make_the_node_unknown(self):
+        # Nothing stored from the slow lane yet: still unknown, still not a
+        # reason to call the whole node unreachable.
+        m = self._empty_array_manager()
         m.run_cycle('a1b2', collector.FAST, 1000.0)
         self.assertEqual(health.UNKNOWN, self.health('thermal')['state'])
         self.assertEqual('ok', self.health('overall')['state'])
+
+    def test_the_stored_disk_inventory_is_used_when_the_array_has_no_disks(self):
+        """P1 exit F-4, at the level that actually shipped broken.
+
+        health.evaluate_thermal takes the inventory, but the daemon evaluates
+        on the FAST lane and the inventory is a SLOW-lane payload - so a fix
+        that stops at the pure function reaches production not at all. This is
+        Raven: an empty array, eleven disks the array does not know about, and
+        a card that read "no disk temperature reported" while the Disks tab
+        showed 33-40 C for the same box.
+        """
+        store.upsert_state(self.conn, 'a1b2', 'disks', 'ok', payload={
+            'disks': [{'device': '/dev/sda', 'temp': 37},
+                      {'device': '/dev/sdb', 'temp': 41}]})
+        m = self._empty_array_manager()
+        m.run_cycle('a1b2', collector.FAST, 1000.0)
+        row = self.health('thermal')
+        self.assertEqual(health.OK, row['state'])
+        self.assertEqual(41, row['value'])
+        self.assertIn('inventory', row['basis'])
 
 
 if __name__ == '__main__':

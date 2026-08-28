@@ -74,17 +74,48 @@ def evaluate_capacity(array, thresholds):
     return Indicator(OK, pct, '%g%% used' % pct)
 
 
-def evaluate_thermal(array, thresholds):
-    temp = (array or {}).get('temp_max')
-    if temp is None:
+def _hottest_physical(disks):
+    """The hottest disk in the physical enumeration, or None.
+
+    P1 exit finding F-4: `array.temp_max` covers array-assigned disks and
+    parities only. Raven's array is empty, so every one of its eleven disks was
+    invisible to this indicator - the card read "no disk temperature reported"
+    while the Disks tab displayed 33-40 C for that same box, one tab over. A
+    box with no thermal monitoring at all is the failure this indicator exists
+    to prevent.
+    """
+    temps = [d.get('temp') for d in (disks or {}).get('disks') or []
+             if isinstance(d.get('temp'), (int, float)) and not isinstance(d.get('temp'), bool)]
+    return max(temps) if temps else None
+
+
+def evaluate_thermal(array, thresholds, disks=None):
+    """Hottest disk anywhere on the box, array-assigned or not.
+
+    The MAX of both sources, not a fallback to one: an unassigned disk cooking
+    in a bay is exactly as much of a problem as an array one, and taking only
+    the array's number is what made Raven blind. The inventory is a slow-lane
+    payload and may be up to ten minutes old, so this can hold a warning a
+    little past the event - the conservative direction, and the basis says
+    where the reading came from.
+    """
+    from_array = (array or {}).get('temp_max')
+    from_disks = _hottest_physical(disks)
+    if from_array is None and from_disks is None:
         return Indicator(UNKNOWN, None, 'no disk temperature reported')
+    if from_array is None or (from_disks is not None and from_disks > from_array):
+        temp, where = from_disks, ' (from the last disk inventory)'
+    else:
+        temp, where = from_array, ''
     crit = float(thresholds['temp_crit'])
     warn = float(thresholds['temp_warn'])
     if temp >= crit:
-        return Indicator(WARN, temp, 'hottest disk %g C, critical at %g C' % (temp, crit))
+        return Indicator(WARN, temp,
+                         'hottest disk %g C%s, critical at %g C' % (temp, where, crit))
     if temp >= warn:
-        return Indicator(WATCH, temp, 'hottest disk %g C, warm at %g C' % (temp, warn))
-    return Indicator(OK, temp, 'hottest disk %g C' % temp)
+        return Indicator(WATCH, temp,
+                         'hottest disk %g C%s, warm at %g C' % (temp, where, warn))
+    return Indicator(OK, temp, 'hottest disk %g C%s' % (temp, where))
 
 
 def evaluate_disk_errors(history):
@@ -114,7 +145,7 @@ def evaluate(payloads, thresholds=None, errors_history=()):
     return {
         'array_state': evaluate_array_state(array),
         'capacity': evaluate_capacity(array, limits),
-        'thermal': evaluate_thermal(array, limits),
+        'thermal': evaluate_thermal(array, limits, (payloads or {}).get('disks')),
         'disk_errors': evaluate_disk_errors(errors_history),
     }
 

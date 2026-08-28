@@ -286,6 +286,24 @@ def upsert_health(conn, node_id, indicator, state, value=None, basis=None,
     conn.commit()
 
 
+def read_payload(conn, node_id, domain):
+    """The last stored payload for one domain, decoded, or None.
+
+    Health evaluation runs on the FAST lane, but the disk inventory is a slow
+    one, so the hottest-disk fallback (health.evaluate_thermal, P1 exit F-4)
+    has to reach back for the last one stored rather than wait ten minutes for
+    a fresh cycle it will never see.
+    """
+    row = conn.execute('SELECT payload FROM node_state WHERE node_id=? AND domain=?',
+                       (node_id, domain)).fetchone()
+    if row is None or row['payload'] is None:
+        return None
+    try:
+        return json.loads(row['payload'])
+    except ValueError:
+        return None
+
+
 def read_health(conn, node_id):
     """Every indicator for one node, keyed by indicator name."""
     rows = conn.execute('SELECT * FROM node_health WHERE node_id=?', (node_id,)).fetchall()

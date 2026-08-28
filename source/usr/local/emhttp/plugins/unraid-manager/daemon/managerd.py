@@ -426,6 +426,14 @@ class Manager(object):
                                                   'array.errors_total', cutoff)
             previous = store.read_health(self.conn, node_id)
 
+            # The disk inventory is a SLOW-lane payload, so it is never in this
+            # cycle's results - health runs on the fast lane. Without reaching
+            # back for the stored one, thermal sees only array-assigned disks,
+            # and a box whose disks are all unassigned has no thermal
+            # monitoring at all (P1 exit F-4: Raven, eleven disks at 33-40 C,
+            # card reading "no disk temperature reported").
+            payloads.setdefault('disks', store.read_payload(self.conn, node_id, 'disks'))
+
             indicators = health.evaluate(payloads, thresholds, errors_history)
             settled = {}
             rows = []

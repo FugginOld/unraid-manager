@@ -91,6 +91,55 @@ class TestThermal(unittest.TestCase):
         out = health.evaluate_thermal(array_payload('seed/array_empty.json'), self.T)
         self.assertEqual(health.UNKNOWN, out.state)
 
+    # -- P1 exit finding F-4 -------------------------------------------------
+    # Raven's array is empty, so array.temp_max is None and every one of its
+    # eleven disks was invisible here: the card read "no disk temperature
+    # reported" while the Disks tab showed 33-40 C for the same box. A box with
+    # no thermal monitoring at all is what this indicator exists to prevent.
+    INVENTORY = {'disks': [{'device': '/dev/sda', 'temp': 37},
+                           {'device': '/dev/sdb', 'temp': 41},
+                           {'device': '/dev/sdc', 'temp': None}]}
+
+    def test_unassigned_disks_are_still_watched(self):
+        out = health.evaluate_thermal(array_payload('seed/array_empty.json'), self.T,
+                                      self.INVENTORY)
+        self.assertEqual(health.OK, out.state)
+        self.assertEqual(41, out.value)
+
+    def test_the_basis_says_the_reading_came_from_the_slower_inventory(self):
+        # It can be up to ten minutes old; an operator comparing it against the
+        # Disks tab deserves to know which number they are looking at.
+        out = health.evaluate_thermal({'temp_max': None}, self.T, self.INVENTORY)
+        self.assertIn('inventory', out.basis)
+
+    def test_a_hot_unassigned_disk_beats_a_cool_array(self):
+        # The MAX of both, not a fallback: an unassigned disk cooking in a bay
+        # is exactly as much of a problem as an array one.
+        out = health.evaluate_thermal({'temp_max': 30}, self.T,
+                                      {'disks': [{'temp': 62}]})
+        self.assertEqual(health.WARN, out.state)
+        self.assertEqual(62, out.value)
+
+    def test_the_array_reading_wins_when_it_is_the_hotter_one(self):
+        out = health.evaluate_thermal({'temp_max': 55}, self.T, self.INVENTORY)
+        self.assertEqual(health.WATCH, out.state)
+        self.assertEqual(55, out.value)
+        self.assertNotIn('inventory', out.basis)
+
+    def test_an_inventory_with_no_readings_is_still_unknown(self):
+        # Not 0 C, and not OK: no reading is no reading.
+        out = health.evaluate_thermal({'temp_max': None}, self.T,
+                                      {'disks': [{'temp': None}, {'device': '/dev/sdb'}]})
+        self.assertEqual(health.UNKNOWN, out.state)
+
+    def test_evaluate_passes_the_inventory_through(self):
+        # The wiring, not just the function: evaluate() is what the daemon
+        # calls, and a fix that never reaches it fixes nothing.
+        out = health.evaluate({'array': array_payload('seed/array_empty.json'),
+                               'disks': self.INVENTORY}, self.T)
+        self.assertEqual(health.OK, out['thermal'].state)
+        self.assertEqual(41, out['thermal'].value)
+
 
 class TestDiskErrors(unittest.TestCase):
     def test_no_history_is_unknown(self):

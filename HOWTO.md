@@ -31,6 +31,12 @@ sed 's|"00000000000000000000000000000000"|"'"$MD5"'"|' unraid-manager.plg \
 plugin install /boot/config/plugins/unraid-manager.plg
 ```
 
+**Order matters when reinstalling.** `plugin remove` deletes
+`/boot/config/plugins/unraid-manager.plg` along with the package, so write the
+patched plg *after* the remove, never before — otherwise the install has no file
+to read and fails with "XML file doesn't exist or xml parse error". Observed
+2026-08-27.
+
 **Reinstalling.** `plugin install` refuses a plugin that is already registered,
 and `plugin update` resolves `pluginURL` — which points at `main` and will not
 have your changes. Use `plugin remove unraid-manager.plg`, re-stage the `.plg`

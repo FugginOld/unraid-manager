@@ -53,7 +53,8 @@ function unreadText (unread) {
 
 <template>
   <div class="um-card" role="button" tabindex="0"
-       @click="$emit('open', node.id)" @keydown.enter="$emit('open', node.id)">
+       @click="$emit('open', node.id)" @keydown.enter="$emit('open', node.id)"
+       @keydown.space.prevent="$emit('open', node.id)">
     <div class="um-card-head">
       <strong>{{ node.name }}</strong>
       <StatusChip :state="node.state" />
@@ -97,7 +98,10 @@ function unreadText (unread) {
 
     <div class="um-card-foot um-hint">
       <span v-if="node.state !== 'ok'">{{ node.state }} {{ held(node.since) }} · </span>
-      last seen {{ node.last_seen || 'never' }}
+      <!-- fleet.js styled a never-seen node's cell as um-unknown - "we have
+           not heard" gets the same distinct treatment here (fix round 1,
+           item 8). -->
+      <span :class="{ 'um-unknown': !node.last_seen }">last seen {{ node.last_seen || 'never' }}</span>
     </div>
   </div>
 </template>

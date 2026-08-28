@@ -8,13 +8,18 @@ import NodeDrawer from '../components/NodeDrawer.vue'
 // useEndpoint('health') is memoised: this returns the SAME data/refresh as
 // App.vue's own call, so registering here just adds this view's own
 // mount/unmount lifetime to the shared refcount - it does not open a second
-// stream or double the fetch rate (live.js, useEndpoint doc comments).
-const { data, refresh } = useEndpoint('health')
-// Controller amendment C: the "numbers are old" banner and the
-// dbUnreadable check both live in App.vue now, page-wide (Task 12) - this
-// view must not grow its own copy of either. useLive(refresh) is still
-// called so this view's mount/unmount participates in the shared refcount
-// the way every other caller does.
+// stream or double the fetch rate (live.js, useEndpoint doc comments). Taking
+// loading and dbUnreadable off this same call (fix round 1, item 7) is a
+// second READ of an already-shared object, not a second check or a second
+// fetch.
+const { data, refresh, loading, dbUnreadable } = useEndpoint('health')
+// Controller amendment C: the "numbers are old" banner lives in App.vue now,
+// page-wide (Task 12) - this view must not grow its own copy of it.
+// useLive(refresh) is still called so this view's mount/unmount participates
+// in the shared refcount the way every other caller does. The dbUnreadable
+// short-circuit amendment C assumed App.vue already provided did not exist
+// (App.vue renders <component :is> unconditionally) - fixed below instead by
+// reading dbUnreadable here and gating on it directly.
 useLive(refresh)
 const open = ref(null)
 
@@ -24,12 +29,24 @@ const nodes = computed(() => data.value?.nodes ?? [])
 
 <template>
   <div>
-    <p v-if="fleet">
+    <!-- fleet.js showed "Loading fleet..." from first paint; without this,
+         a down managerd renders nothing at all here until App.vue's
+         numbers-are-old banner fires at 180s (fix round 1, item 6). -->
+    <p v-if="!data && loading">Loading…</p>
+
+    <!-- An unreadable database still returns {fleet: {nodes:0, ...}, nodes: [],
+         db: false} (um_fleet_health(null)) - without the dbUnreadable guard
+         this prints "0 node(s): 0 ok..." next to App.vue's "could not be
+         read" banner, which is a second, wrong claim (fix round 1, item 7). -->
+    <p v-if="fleet && !dbUnreadable">
       {{ fleet.nodes }} node(s): {{ fleet.ok }} ok, {{ fleet.degraded }} degraded,
       {{ fleet.unknown }} unknown.
     </p>
 
-    <p v-if="data && !nodes.length">
+    <!-- Same guard: "no nodes enrolled, go add one" is wrong advice when the
+         real problem is that the database can't be read - nodes may well be
+         enrolled (fix round 1, item 7). -->
+    <p v-if="data && !dbUnreadable && !nodes.length">
       No nodes enrolled. Go to Settings → Utilities → Unraid-Manager to add one.
     </p>
 

@@ -38,7 +38,11 @@ onUnmounted(() => document.removeEventListener('keydown', onKey))
       <tbody>
         <tr v-for="(domain, name) in node.domains" :key="name">
           <td>{{ name }}</td>
-          <td><StatusChip :state="domain.status === 'error' ? 'warn' : domain.status" /></td>
+          <!-- fleet.js showed "Error", not "Warning", for a hard-failed
+               domain; 'warn' collapsed that distinction (fix round 1,
+               item 8). StatusChip's 'crit' state (Critical / red X) is the
+               distinct-from-warn treatment available for it. -->
+          <td><StatusChip :state="domain.status === 'error' ? 'crit' : domain.status" /></td>
           <td>{{ domain.fetched_at || 'never' }}</td>
           <td class="um-hint">{{ domain.error || '' }}</td>
         </tr>

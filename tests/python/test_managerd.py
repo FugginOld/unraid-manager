@@ -219,11 +219,40 @@ class TestPublish(ManagerCase):
         self.assertEqual('ok', msg['domains']['info'])
         self.assertIn('ts', msg)
 
-    def test_an_unchanged_cycle_publishes_nothing(self):
+    def test_every_successful_cycle_publishes_so_the_pane_can_refresh(self):
+        """This test used to assert the opposite, and that is why nchan was dead.
+
+        `changed` holds STATUS transitions (ok -> error -> unknown). On a
+        healthy fleet nothing ever transitions, so publishing only `if changed`
+        meant the daemon never nudged at all - proven on Raven during the P1
+        exit trial, where nginx's `total published messages` did not move
+        across a forced poll. The 30s fallback timer in the browser had been
+        the entire live-update mechanism since P0.
+
+        A poll that succeeded has fresh data behind it - a new fetched_at at
+        the very least, which is exactly what the card's "last seen" shows -
+        so it is worth a nudge.
+        """
         m = self.manager()
         m.run_cycle('a1b2', collector.FAST, 1000.0)
         m.run_cycle('a1b2', collector.FAST, 1030.0)
-        self.assertEqual(1, len(self.published))
+        self.assertEqual(2, len(self.published))
+
+    def test_a_repeated_failure_publishes_nothing(self):
+        # The other direction still holds: a node that was already failing and
+        # is still failing has produced nothing new to look at. Only the
+        # transition into failure nudges.
+        # self.manager(), NOT a bare Manager(): the helper injects the node
+        # registry and calls reload(). Without it run_cycle early-returns at
+        # `if node is None`, stores nothing, publishes nothing, and the
+        # assertion below holds 0 == 0 no matter what the code does. The first
+        # draft of this test did exactly that and could not see `if True:`.
+        m = self.manager(post_fn=good_post(fail=tuple(FAST_DATA)))
+        m.run_cycle('a1b2', collector.FAST, 1000.0)
+        first = len(self.published)
+        self.assertEqual(1, first, 'the transition into failure must nudge once')
+        m.run_cycle('a1b2', collector.FAST, 1030.0)
+        self.assertEqual(first, len(self.published))
 
     def test_the_delta_carries_no_payload_and_no_key(self):
         import json as _json

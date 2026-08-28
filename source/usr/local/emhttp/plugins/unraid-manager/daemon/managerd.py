@@ -380,7 +380,16 @@ class Manager(object):
             # critical of the three; it goes last.
             self._update_health(node_id, results, stamp)
 
-        if changed:
+        # `changed` is STATUS transitions only, and on a healthy fleet nothing
+        # ever transitions - so publishing on it alone meant the daemon nudged
+        # essentially never, and the browser's 30s fallback timer was the whole
+        # live-update mechanism from P0 until the P1 exit trial caught it
+        # (nginx's `total published messages` did not move across a forced
+        # poll on Raven). A cycle that stored anything has fresh data behind
+        # it, including a new fetched_at, which is what the card's "last seen"
+        # renders. A node that was already failing and still is has produced
+        # nothing new, so it still stays quiet.
+        if changed or any(result.status == 'ok' for result in results):
             self._publish({'node_id': node_id, 'domains': changed, 'ts': stamp})
         return changed
 

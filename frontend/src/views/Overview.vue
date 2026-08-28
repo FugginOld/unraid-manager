@@ -12,7 +12,7 @@ import NodeDrawer from '../components/NodeDrawer.vue'
 // loading and dbUnreadable off this same call (fix round 1, item 7) is a
 // second READ of an already-shared object, not a second check or a second
 // fetch.
-const { data, refresh, loading, dbUnreadable } = useEndpoint('health')
+const { data, refresh, loading, error, dbUnreadable } = useEndpoint('health')
 // Controller amendment C: the "numbers are old" banner lives in App.vue now,
 // page-wide (Task 12) - this view must not grow its own copy of it.
 // useLive(refresh) is still called so this view's mount/unmount participates
@@ -32,7 +32,13 @@ const nodes = computed(() => data.value?.nodes ?? [])
     <!-- fleet.js showed "Loading fleet..." from first paint; without this,
          a down managerd renders nothing at all here until App.vue's
          numbers-are-old banner fires at 180s (fix round 1, item 6). -->
-    <p v-if="!data && loading">Loading…</p>
+    <!-- v-if="!data", not "!data && loading": loading flips false the moment
+         the first refresh rejects, so gating on it left the pane rendering
+         nothing at all from ~t+200ms until the 180s banner - the exact symptom
+         item 6 named (round 2). error carries the reason when there is one. -->
+    <p v-if="!data" class="um-hint">
+      {{ error ? 'Could not reach the manager: ' + error : 'Loading…' }}
+    </p>
 
     <!-- An unreadable database still returns {fleet: {nodes:0, ...}, nodes: [],
          db: false} (um_fleet_health(null)) - without the dbUnreadable guard

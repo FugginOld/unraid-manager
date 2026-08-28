@@ -24,7 +24,7 @@ function check(string $name, bool $ok): void {
 function vue_code_only(string $src): string {
     $src = preg_replace('/<!--.*?-->/s', '', $src);
     $src = preg_replace('#/\*.*?\*/#s', '', $src);
-    $src = preg_replace('#//[^\n]*#', '', $src);
+    $src = preg_replace('#(^|[^:])//[^\n]*#m', '$1', $src);
     return $src;
 }
 
@@ -252,8 +252,12 @@ check('useEndpoint throws when the response lacks its expected top-level key',
    a bug" - it is meant to read Unraid's own custom property, always. Check
    every .vue file, not just App.vue, so a future component cannot slip one in
    either. */
+/* glob components/, do not name them: NodeCard.vue and NodeDrawer.vue both
+   declare `background:` and were exempt while this list named StatusChip
+   explicitly, so `background: #1e1e1e` in a card passed the whole suite. */
 $vueFiles = array_merge(
-    [$src . '/App.vue', $src . '/components/StatusChip.vue'],
+    [$src . '/App.vue'],
+    glob($src . '/components/*.vue') ?: [],
     glob($src . '/views/*.vue') ?: []
 );
 $hardcodedBg = false;
@@ -301,9 +305,17 @@ check('the overview actually mounts NodeCard and NodeDrawer, not just imports th
 check('the overview subscribes to live updates via useLive(refresh)',
       (bool) preg_match('/\buseLive\s*\(\s*refresh\s*\)/', $overviewCode));
 
-/* ── fix round 1, item 6: a loading state before the first response ──────── */
-check('overview shows a loading state before the first response arrives',
-      (bool) preg_match('/v-if="\s*!\s*data\s*&&\s*loading\s*"/', $overviewTemplate));
+/* ── fix round 1 item 6, tightened in round 2: never a blank pane ────────
+   Gated on !data ALONE. `loading` flips false the moment the first refresh
+   rejects, so "!data && loading" rendered nothing at all from ~t+200ms until
+   the 180s banner - which was the symptom item 6 named, still alive after the
+   fix that claimed to close it. */
+check('the placeholder is not gated on loading, which goes false on failure',
+      (bool) preg_match('/v-if="\s*!\s*data\s*"/', $overviewTemplate)
+      && !preg_match('/v-if="\s*!\s*data\s*&&\s*loading\s*"/', $overviewTemplate));
+check('the overview surfaces the error rather than an eternal Loading',
+      (bool) preg_match('/\berror\b/', $overviewTemplate)
+      && (bool) preg_match('/const\s*\{[^}]*\berror\b[^}]*\}\s*=\s*useEndpoint/', $overviewCode));
 
 /* ── fix round 1, item 7: an unreadable database must not also print wrong
    fleet-empty advice underneath App.vue's own "could not be read" banner ─── */

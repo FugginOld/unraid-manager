@@ -108,7 +108,11 @@ function baseNode (overrides = {}) {
   return {
     id: 'n1', name: 'Raven', state: 'ok', since: null, array_state: 'started',
     array_empty: false, capacity: { used: 100, total: 200 },
-    unraid: '6.12.9', api: '4.1.2', booted_at: null, last_seen: null,
+    unraid: '6.12.9', api: '4.1.2', booted_at: null,
+    /* NOT null: item 8 put um-unknown on the last-seen span, so a null here
+       puts that class in every render and the unread-null check below passes
+       on an unrelated element. */
+    last_seen: '2026-08-28T00:00:00Z',
     unread: null, indicators: {},
     ...overrides,
   }

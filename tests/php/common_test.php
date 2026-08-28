@@ -185,10 +185,10 @@ check('um_db applies the read-only pragma', str_contains($common_src, 'um_readon
 /* Source-text assertions, in the style of the chmod check above: the gates
    themselves are proven by the predicate tests, and these prove each endpoint
    actually calls them. A new endpoint that forgets one fails here. */
-foreach (['nodes', 'settings', 'events', 'health', 'disks'] as $endpoint) {
+foreach (['nodes', 'settings', 'events', 'health', 'disks', 'drift'] as $endpoint) {
     $src = (string) @file_get_contents(__DIR__ . '/../../source/usr/local/emhttp/plugins/unraid-manager/api/' . $endpoint . '.php');
     check("$endpoint.php requires a session", str_contains($src, 'um_require_session()'));
-    if (!in_array($endpoint, ['events', 'health', 'disks'], true)) {   /* GET-only endpoints */
+    if (!in_array($endpoint, ['events', 'health', 'disks', 'drift'], true)) {   /* GET-only endpoints */
         check("$endpoint.php requires csrf on POST",
               str_contains($src, 'um_require_csrf($_POST)'));
     }

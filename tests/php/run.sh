@@ -44,6 +44,25 @@ else
     echo "!!! node not on PATH - skipping tests/js/live_singleton.mjs (mandatory in CI)"
 fi
 
+# Zero-dependency proof of NodeCard.vue's actual rendered output (null-vs-zero
+# unread, empty-array-vs-0%, unknown-indicator-vs-head-chip) via a real SSR
+# compile+render, not a source-text check - see tests/js/node_card.mjs. Same
+# guard shape as tests/js/live_singleton.mjs above.
+if command -v node >/dev/null; then
+    echo "--- tests/js/node_card.mjs"
+    out=$(node tests/js/node_card.mjs 2>&1)
+    code=$?
+    echo "$out"
+    if [ "$code" -ne 0 ]; then
+        fails=$((fails + 1))
+    elif ! grep -q ': all pass$' <<< "$out"; then
+        echo "!!! tests/js/node_card.mjs exited 0 without ever printing 'all pass' - treating as FAILED"
+        fails=$((fails + 1))
+    fi
+else
+    echo "!!! node not on PATH - skipping tests/js/node_card.mjs (mandatory in CI)"
+fi
+
 if [ "$fails" -ne 0 ]; then
     echo "php suite: $fails file(s) FAILED"
     exit 1

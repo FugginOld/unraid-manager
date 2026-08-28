@@ -1,27 +1,29 @@
 # P1 exit — the pane on Raven and Golem
 
 Operator-assisted trial, 2026-08-28, Raven (manager) + Golem (peer).
-Head at start `ab77584`, release `2026.08.28`. Four P1 defects, one operator
-finding and three doc defects were fixed during the trial; head at end
-`9c619f8`.
+Head at start `ab77584`, release `2026.08.28`. Every finding below was fixed
+during or immediately after the trial; head at end `90cddd6`.
 
 ## Verdict
 
-**Yes, with one open defect worth fixing first.** Every step of the trial
-passes on hardware. One screen carries both boxes' health, disks and drift; it
+**Yes.** Every step of the trial passes on hardware, and every finding it
+produced is closed. One screen carries both boxes' health, disks and drift; it
 follows the theme; it updates live within a second of a poll; it says so, in
 the operator's own clock, when the data stops moving; and hysteresis behaves
 exactly as specified — two cycles to escalate, five to clear.
 
-The one thing I would fix before calling the phase done is **F-4**: a box whose
-disks are all unassigned has no thermal monitoring at all, while the pane
-displays eleven temperatures for it one tab over. That is a monitoring blind
-spot on a real member of this fleet, not a cosmetic issue. It is a contained
-change in the health engine and does not touch the pane.
-
 Three of the four P1 defects found here had survived two phases with a green
 test suite. Every one of them was invisible to the suite for the same reason:
-nothing asserted on what the operator actually sees or receives.
+nothing asserted on what the operator actually sees or receives. That is the
+lesson worth carrying into P2, and the reason this phase added SSR render
+harnesses and response-checking rather than only fixing the four bugs.
+
+**Two fixes are tested but not yet re-verified on hardware** — F-4 (thermal
+from the disk inventory) and F-8 (thresholds inherited from Unraid). Both need
+one install and a look at the cards. F-8 also needs an operator action: a
+`temp_warn` of 50 was typed into `manager.cfg` during step 7, and an explicit
+value still wins, so the temperature boxes have to be cleared before Unraid's
+45/55 take effect.
 
 ## Per step
 
@@ -82,11 +84,11 @@ no blank cells and no `—`, so both nodes had reported their plugin lists.
 | F-1 | The stale banner cannot fire while php-fpm is up | **P1** | fixed `a485caf`, **verified on hardware** |
 | F-2 | Every nchan publish was refused `403` | P1 | fixed, `5b10e55` |
 | F-3 | Nudges fired only on a status flip, so never on a healthy fleet | P1 | fixed, `5296e86` |
-| F-4 | Thermal is blind on a box whose disks are unassigned | P1 or P2 | **open, awaiting ruling** |
-| F-5 | Every spare is listed twice | P2 | **open** |
-| F-6 | Card says `OK disk errors` while the table shows 192 | P2 | **open, awaiting ruling** |
-| F-7 | The Disks tab hardcodes Celsius; Unraid has a unit setting | P2 | **open** |
-| F-8 | Our temp thresholds ignore the `hot`/`max` the operator already set | P2 | **open** |
+| F-4 | Thermal is blind on a box whose disks are unassigned | **P1** | fixed, `fe96849` |
+| F-5 | Every spare is listed twice | P2 | fixed, `c618eda` — said on screen, not hidden |
+| F-6 | Card says `OK disk errors` while the table shows 192 | P2 | fixed, `c618eda` |
+| F-7 | The Disks tab hardcodes Celsius; Unraid has a unit setting | P2 | labelled, `c618eda`; conversion deliberately deferred |
+| F-8 | Our temp thresholds ignore the `hot`/`max` the operator already set | P2 | fixed, `90cddd6` |
 | F-9 | The stale label dumped nginx's 504 HTML page into the sentence | P2 | fixed, `9c619f8` |
 | D-1 | `plugin remove` deletes the `.plg`, so the documented order loses it | doc | fixed `HOWTO.md` + both runbooks |
 | D-2 | The runbook's `rc` path (`/etc/rc.d/…`) does not exist | doc | fixed in the runbook |
@@ -191,18 +193,44 @@ All three were mine, and all three cost time at the keyboard:
   diagnosis of the failed install blamed exactly this and was wrong — the build
   had succeeded; D-1 was the cause.)
 
-### F-7, F-8 — two settings Unraid already has and we ignore (P2, open)
+### F-4 — thermal was blind where disks are unassigned (P1, fixed `fe96849`)
+
+Raven's Disks tab showed 11 disks at 33-40 C. Raven's card read `? Unknown
+thermal - no disk temperature reported`. `collector.py` computes `temp_max`
+from array-assigned disks and parities only, and Raven's array is empty, so
+that box had no thermal monitoring at all.
+
+Fixed as the MAX of the array reading and the hottest disk in the physical
+inventory, not a fallback to one: a fallback would still have missed a hot
+spare on a populated box. The inventory is a slow-lane payload, so
+`_update_health` reaches back for the last stored one - health runs on the
+fast lane, and a fix that stopped at the pure function would have passed every
+unit test and changed nothing on the box. The basis names the source when the
+inventory is the number in play, because it can be ten minutes old.
+
+### F-7, F-8 — two settings Unraid already has (F-7 labelled, F-8 fixed)
 
 `dynamix.cfg`'s `[display]` section, read while fixing the clock, carries two
 more things the operator has already decided:
 
-- `unit="C"` — a temperature unit. The Disks tab hardcodes Celsius. Raven is on
-  C so nothing is visibly wrong, but a box set to Fahrenheit would be read
-  wrong by a wide margin.
-- `hot="45"`, `max="55"` — Unraid's own disk temperature thresholds. Our health
-  engine ships unrelated defaults (`temp_warn` 50, `temp_crit` 60), so there
-  are two answers on one box to "how hot is too hot". Worth considering whether
-  our defaults should seed from those rather than from a constant.
+- `unit="C"` — a temperature unit. **Labelled, not converted** (`c618eda`).
+  The settings page's `temp_warn`/`temp_crit` are Celsius, so showing `117 °F`
+  in the table while the threshold field silently means Celsius would invite an
+  operator to set 120 and get a threshold that can never fire — a worse defect
+  than the one it would fix. Both surfaces now name the unit. Honouring the
+  preference properly means display AND thresholds AND their labels, together.
+- `hot="45"`, `max="55"`, `warning="70"`, `critical="90"` — Unraid's own
+  thresholds, which the operator has already filled in. **Fixed** (`90cddd6`):
+  these now supply the defaults, an explicit value on our page still overrides
+  as a fleet-wide setting, and a blank field means "follow Unraid" and is
+  stored blank so it keeps following. `capacity_watch` became a real threshold
+  rather than a fixed ten points under the high-water mark, because Unraid has
+  both numbers. `hotssd`/`maxssd` are not read: telling an SSD from a spinner
+  needs a rotational flag the physical enumeration does not carry.
+
+  Read from the MANAGER's flash and applied fleet-wide — a peer's own disk
+  settings live on the peer and tier 0 cannot ask for them. The settings page
+  says so rather than implying per-node behaviour.
 
 ### F-9 — nginx's 504 page rendered into a sentence (P2, fixed `9c619f8`)
 

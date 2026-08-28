@@ -135,7 +135,17 @@ def evaluate_disk_errors(history):
                          '%g new disk error(s) in the window' % (last - first))
     # last < first means a peer rebooted and its counters reset; that is not an
     # error, and a flat counter is not one however large it is.
-    return Indicator(OK, last, 'no new disk errors in the window')
+    #
+    # P1 exit finding F-6: the count is named when there is one. On Raven the
+    # card read "OK disk errors - no new disk errors in the window" while the
+    # Disks tab showed 192 errors on Golem's disk15, one tab over. Both were
+    # true and together they read as a contradiction. The indicator judges
+    # CHANGE, deliberately - a stable historical count is not an incident - so
+    # it says so rather than leaving the operator to reconcile two screens.
+    if last:
+        return Indicator(OK, last,
+                         'no new disk errors in the window; %g recorded in total' % last)
+    return Indicator(OK, last, 'no disk errors recorded')
 
 
 def evaluate(payloads, thresholds=None, errors_history=()):

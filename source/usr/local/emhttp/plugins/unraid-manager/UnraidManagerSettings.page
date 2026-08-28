@@ -36,7 +36,7 @@ $um_csrf = $var['csrf_token'] ?? '';
           Leave blank to restore the default (90).</span></td>
     </tr>
     <tr>
-      <td>Disk temperature warm / critical:</td>
+      <td>Disk temperature warm / critical (&deg;C):</td>
       <td><input type="number" id="um-temp-warn" min="20" max="99" value="50">
         <input type="number" id="um-temp-crit" min="20" max="99" value="60">
         <span class="um-hint">Degrees C for the hottest disk on a node. Critical must be

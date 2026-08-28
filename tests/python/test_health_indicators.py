@@ -155,6 +155,28 @@ class TestDiskErrors(unittest.TestCase):
                                            ('2026-08-27T00:05:00Z', 4210)])
         self.assertEqual(health.OK, out.state)
 
+    def test_a_flat_counter_still_names_the_count(self):
+        """P1 exit finding F-6.
+
+        The card read "OK disk errors - no new disk errors in the window" while
+        the Disks tab showed 192 on Golem's disk15, one tab over. Both true;
+        together they read as a contradiction. This indicator judges CHANGE on
+        purpose, so it says what the standing count is rather than leaving the
+        operator to reconcile two screens.
+        """
+        out = health.evaluate_disk_errors([('2026-08-27T00:00:00Z', 192),
+                                           ('2026-08-27T00:05:00Z', 192)])
+        self.assertEqual(health.OK, out.state)
+        self.assertIn('192', out.basis)
+        self.assertIn('no new disk errors', out.basis)
+
+    def test_a_clean_disk_does_not_report_a_count_of_nothing(self):
+        # "0 recorded in total" is noise on a healthy box.
+        out = health.evaluate_disk_errors([('2026-08-27T00:00:00Z', 0),
+                                           ('2026-08-27T00:05:00Z', 0)])
+        self.assertEqual(health.OK, out.state)
+        self.assertNotIn('0', out.basis)
+
     def test_any_increase_inside_the_window_is_warn(self):
         out = health.evaluate_disk_errors([('2026-08-27T00:00:00Z', 0),
                                            ('2026-08-27T00:05:00Z', 0),

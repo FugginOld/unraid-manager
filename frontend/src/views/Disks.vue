@@ -129,7 +129,7 @@ const spares = computed(() => data.value?.spares ?? [])
             <th @click="sortBy('device')">Device</th>
             <th @click="sortBy('vendor')">Vendor</th>
             <th @click="sortBy('size')">Size</th>
-            <th @click="sortBy('temp')">Temp</th>
+            <th @click="sortBy('temp')">Temp &deg;C</th>
             <th @click="sortBy('array_status')">Array</th>
             <th @click="sortBy('errors')">Errors</th>
             <th @click="sortBy('smart_status')">SMART</th>
@@ -163,7 +163,18 @@ const spares = computed(() => data.value?.spares ?? [])
         </tbody>
       </table>
 
+      <!-- P1 exit finding F-5: every spare also appears in the table above,
+           with a dash for slot/array/errors - `spares` is a subset of `disks`,
+           not a separate set of hardware. Said out loud rather than solved by
+           hiding rows: the table above is "every disk this box can see", and
+           filtering it would make the two tables disagree about what exists.
+           Raven has eleven disks and nine of them are spares. -->
       <h3>Spares</h3>
+      <p class="um-hint">
+        Unassigned disks. These also appear in the table above, where their
+        slot, array status and error count read “—” because the array does not
+        track them.
+      </p>
       <table class="tablesorter">
         <thead><tr><th>Node</th><th>Model</th><th>Device</th><th>Vendor</th><th>Size</th></tr></thead>
         <tbody>

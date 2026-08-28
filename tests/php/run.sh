@@ -32,8 +32,12 @@ done
 #   views.mjs          - Disks.vue and Drift.vue's rendered output (an array
 #                        slot with no disk behind it, 0-vs-unknown errors,
 #                        never-polled vs failed-poll, absent vs unreported)
-# Guarded the way build.sh guards npm: skipped where node is absent, mandatory
-# in CI (ubuntu-latest ships node, which the "Lint JS" step above relies on).
+# Guarded the way build.sh guards npm: skipped where node is absent. That guard
+# is for a dev box without node, NEVER for CI - node being on PATH is not
+# enough, these import out of frontend/node_modules, so the php job installs
+# them (.github/workflows/tests.yml). It went red on 9a29279 and 95b67b0
+# because it did not: the guard fired and all three aborted with
+# ERR_MODULE_NOT_FOUND while every local run stayed green.
 if command -v node >/dev/null; then
     for t in tests/js/live_singleton.mjs tests/js/node_card.mjs tests/js/views.mjs; do
         echo "--- $t"

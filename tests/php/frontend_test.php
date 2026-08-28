@@ -152,6 +152,13 @@ check('no router library was added',
 /* ── amendment 1: the db flag ─────────────────────────────────────────────── */
 /* An unreadable database is byte-identical to a healthy empty fleet unless the
    shell distinguishes them. Handled once in useEndpoint/App.vue, not per view. */
+/* tests/js/ssr.mjs stubs ../api.js for the view harnesses, so its stub is a
+   second declaration of this contract. dbUnreadable/error/loading are pinned
+   below; data and refresh were not, and renaming either would break every view
+   while views.mjs stayed green against the stub. */
+check('useEndpoint returns the data ref and the refresh function the views bind to',
+      (bool) preg_match('/return\s*\{[^}]*data[^}]*refresh[^}]*\}/', $api));
+
 check('the api client reads the db property off a response',
       (bool) preg_match('/\bdb\s*===?\s*false\b|\.db\b/', $api));
 check('the api client exposes error and loading alongside dbUnreadable',
@@ -419,7 +426,12 @@ check('the disks view subscribes to live updates via useLive(refresh)',
    of 72 disks on Raven. A view reading disk.name renders an empty column
    against real hardware and a full one against any fixture that invents the
    field, which is exactly how the first cut passed. */
-check('disk rows read the model field the endpoint emits', str_contains($disks, 'disk.model'));
+/* The rendered interpolation, not the mere substring: `disk.model === null`
+   (the orphan test) satisfies a str_contains on its own, so the Model column
+   could render nothing at all - amendment A's exact failure mode - with this
+   green. views.mjs asserts the rendered value; this asserts the binding. */
+check('disk rows render the model field the endpoint emits',
+      (bool) preg_match('/\{\{\s*disk\.model\s*\}\}/', $disksTemplate));
 check('no row reads a `name` field disks.php never emits',
       !preg_match('/\b(disk|spare)\.name\b/', $disks));
 /* device is unique per node and present on every row including the orphans;

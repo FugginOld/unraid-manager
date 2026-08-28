@@ -65,6 +65,21 @@ jobs:
       - name: Lint JS
         run: find source -name '*.js' -print0 | xargs -0 -r -n1 node --check
 
+      # tests/php/run.sh also runs the three tests/js/*.mjs harnesses, and they
+      # import vue, @vue/compiler-sfc and @vue/server-renderer out of
+      # frontend/node_modules. ubuntu-latest ships node, so run.sh's
+      # `command -v node` guard FIRES and the harnesses abort with
+      # ERR_MODULE_NOT_FOUND unless the install happens here - which is how this
+      # job went red on 9a29279 and 95b67b0 while every local run was green.
+      # The guard is for a dev box without node, never for CI.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install the frontend deps the js harnesses import
+        run: cd frontend && npm ci
+
       - name: Run the php suite
         run: bash tests/php/run.sh
 

@@ -32,10 +32,12 @@ function dash (v) { return v === null || v === undefined ? '—' : v }
 // Controller amendment B: model === null is an array slot with no physical
 // disk behind it - a drive that fell off the bus. It has no SMART status
 // because there is nothing to ask, which is not the same as a disk that
-// answered UNKNOWN. Both the filter and the cell go through here so they can
-// never disagree about what a row's SMART state is.
+// answered UNKNOWN. One spelling, used by both the cell and the filter button:
+// with the literal repeated in the template, changing this function left the
+// "No disk" filter selecting nothing and the whole suite green.
+const NO_DISK = 'no disk'
 function smartOf (disk) {
-  if (disk.model === null) return 'no disk'
+  if (disk.model === null) return NO_DISK
   return disk.smart_status || 'UNKNOWN'
 }
 
@@ -110,7 +112,7 @@ const spares = computed(() => data.value?.spares ?? [])
         <button type="button" @click="smartFilter = ''">Any SMART</button>
         <button type="button" @click="smartFilter = 'OK'">OK</button>
         <button type="button" @click="smartFilter = 'UNKNOWN'">UNKNOWN</button>
-        <button type="button" @click="smartFilter = 'no disk'">No disk</button>
+        <button type="button" @click="smartFilter = NO_DISK">No disk</button>
       </p>
 
       <table class="tablesorter">
@@ -123,12 +125,13 @@ const spares = computed(() => data.value?.spares ?? [])
             <th @click="sortBy('vendor')">Vendor</th>
             <th @click="sortBy('size')">Size</th>
             <th @click="sortBy('temp')">Temp</th>
+            <th @click="sortBy('array_status')">Array</th>
             <th @click="sortBy('errors')">Errors</th>
             <th @click="sortBy('smart_status')">SMART</th>
           </tr>
         </thead>
         <tbody>
-          <tr v-if="!rows.length"><td colspan="9">No disks reported yet.</td></tr>
+          <tr v-if="!rows.length"><td colspan="10">No disks reported yet.</td></tr>
           <!-- device is unique per node and present on every row; model
                repeats across identical drives and is null on the orphans
                (controller amendment A). -->
@@ -143,6 +146,7 @@ const spares = computed(() => data.value?.spares ?? [])
             <td>{{ dash(disk.vendor) }}</td>
             <td>{{ bytes(disk.size) }}</td>
             <td>{{ dash(disk.temp) }}</td>
+            <td>{{ dash(disk.array_status) }}</td>
             <td :class="{ 'um-warn': disk.errors > 0,
                           'um-unknown': disk.errors === null || disk.errors === undefined }">
               {{ dash(disk.errors) }}

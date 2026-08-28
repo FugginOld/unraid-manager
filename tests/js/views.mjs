@@ -75,29 +75,55 @@ try {
   const htmlOrphan = await renderView(Disks, { data: { disks: [DISK, ORPHAN], spares: [], stale: [] } })
   check('an orphan slot (model: null) is rendered, not filtered away',
         htmlOrphan.includes('disk7'))
+  /* Scoped to the row, never to the document: /no disk/ over the whole render
+     is also matched by the "No disk" filter button, which made this check pass
+     against a view with amendment B deleted outright. Same mistake, and the
+     same fix, as the UNKNOWN check below. */
+  const orphanRow = (htmlOrphan.split('<tr').find(r => r.includes('no disk')) ?? '').split('</tr>')[0]
+  const diskRow = (htmlOrphan.split('<tr').find(r => r.includes('disk1')) ?? '').split('</tr>')[0]
   check('an orphan slot is marked by a WORD, not only by a colour or a blank cell',
-        /no disk/i.test(htmlOrphan))
+        /no disk present/.test(orphanRow))
   check('exactly one of the two rows is marked as an orphan',
         (htmlOrphan.match(/no disk present/g) || []).length === 1)
   check('an orphan slot still shows what the array DID report (slot, errors)',
-        htmlOrphan.includes('disk7') && htmlOrphan.includes('12'))
+        orphanRow.includes('disk7') && orphanRow.includes('12'))
+  /* array_status is what tells the operator which Saturday this is: DISK_DSBL
+     means the array is emulating the missing disk, DISK_NP means the slot was
+     never filled. */
+  check('an orphan slot reports what the array thinks of the slot',
+        orphanRow.includes('DISK_DSBL'))
+  /* The Model column had no assertion at all - the one amendment A exists for.
+     A blank cell, the wrong field, or the old `name` under a renamed loop
+     variable all passed both suites. */
+  check('a real disk renders its model, the field the endpoint emits',
+        diskRow.includes('ST10000NM0226'))
   /* Survived the first mutation round: dropping the orphan branch out of
      smartOf() left the row claiming SMART UNKNOWN - a disk that answered "I
      don't know" - for a slot where nothing answered at all. Neither fixture
      row is UNKNOWN, so the word must not appear anywhere in this render. */
-  const orphanRow = (htmlOrphan.split('<tr').find(r => r.includes('no disk present')) ?? '').split('</tr>')[0]
   check('an orphan slot is not reported as a disk whose SMART came back UNKNOWN',
         orphanRow !== '' && !orphanRow.includes('UNKNOWN'))
+  /* Twice: "no disk present" in the Model column and "no disk" in the SMART
+     column, which is also the word the No-disk filter button offers. Renaming
+     the shared constant alone left the button labelled "No disk" and the cell
+     reading something else, with everything else green. */
+  check('the orphan row uses one word for the state, the one the filter offers',
+        (orphanRow.match(/no disk/g) || []).length === 2)
 
   /* ── null-vs-zero, the family this repo has shipped wrong twice ────────── */
   const htmlZeroErrors = await renderView(Disks, { data: { disks: [DISK], spares: [], stale: [] } })
   const htmlNullErrors = await renderView(Disks, {
-    data: { disks: [{ ...DISK, errors: null, temp: null }], spares: [], stale: [] },
+    data: { disks: [{ ...DISK, errors: null }], spares: [], stale: [] },
   })
   check('errors: 0 and errors: null render differently', htmlZeroErrors !== htmlNullErrors)
   check('errors: 0 renders a real zero, not an em dash', />\s*0\s*</.test(htmlZeroErrors))
-  check('errors: null renders "unknown", never a zero the array never reported',
+  check('errors: null never renders a zero the array never reported',
         !/>\s*0\s*</.test(htmlNullErrors))
+  /* And it gets the same "we cannot see this" treatment NodeCard gives a null
+     unread count - asserting only the absence of a zero left the um-unknown
+     class deletable with the suite green. */
+  check('errors: null gets the unknown treatment, not a plain empty-looking cell',
+        /um-unknown[^>]*>\s*—/.test(htmlNullErrors))
 
   /* ── amendment C: both stale shapes, and neither reads as an error ─────── */
   const htmlNeverPolled = await renderView(Disks, {
@@ -120,6 +146,11 @@ try {
         /not been polled|no disk list yet/i.test(htmlNeverPolled))
   check('a never-polled node never renders a bare "null" where a time would go',
         !/null/.test(htmlNeverPolled))
+  /* Vue renders {{ null }} as an empty string, so the check above only bites a
+     string concatenation. This one bites the interpolation: the never-polled
+     sentence must not reach for a timestamp it does not have. */
+  check('a never-polled node does not claim to be showing data collected at some time',
+        !/collected/.test(htmlNeverPolled))
   check('a failed poll names the real error so the operator can act on it',
         htmlFailedPoll.includes('HTTP 504 from 10.0.0.9'))
   check('a failed poll says how old the data on screen is',
@@ -159,6 +190,9 @@ try {
   const htmlDrift = await renderView(Drift, {
     data: { nodes: NODES, rows: [versionRow, sameRow, pluginRow], plugin_versions_available: false },
   })
+  check('the matrix is headed by node NAMES, not the opaque ids they are keyed by',
+        htmlDrift.includes('Wraith') && !htmlDrift.includes('>n3<'))
+  check('a divergent row is highlighted as such', htmlDrift.includes('um-warn'))
   check('a plugin present on a node reads "present"', htmlDrift.includes('present'))
   check('a plugin absent from a node reads "absent", not a blank cell',
         htmlDrift.includes('absent'))

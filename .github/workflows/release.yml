@@ -44,8 +44,21 @@ jobs:
             || { echo "::error::no ###$GITHUB_REF_NAME### block in unraid-manager.plg <CHANGES>"; exit 1; }
           { echo "## Highlights"; echo; cat block.md; } > notes.md
 
+      # build.sh now runs `npm ci && npm run build`. Without this the released
+      # bundle is built by whatever node the runner image happens to carry that
+      # week - a toolchain no test has ever exercised. tests.yml pins 22; so
+      # does this, or the thing users install is not the thing CI checked.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
       - name: Build unraid-manager.txz
         run: bash build.sh "$GITHUB_REF_NAME"
+
+      - name: The manifest must exist, or the released package mounts nothing
+        run: test -f source/usr/local/emhttp/plugins/unraid-manager/ui/.vite/manifest.json
 
       - name: Patch version, md5 and pkgURL in unraid-manager.plg
         run: |

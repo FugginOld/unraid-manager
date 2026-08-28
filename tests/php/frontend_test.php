@@ -53,7 +53,8 @@ check('the page still declares an icon-font Code',
 
 $ci = (string) file_get_contents($root . '/.github/workflows/tests.yml');
 check('CI builds the bundle', str_contains($ci, 'npm ci') && str_contains($ci, 'npm run build'));
-check('CI enforces the size budget', str_contains($ci, 'BUDGET'));
+check('CI enforces the size budget at the specced 250 KB',
+      str_contains($ci, 'BUDGET') && str_contains($ci, '256000'));
 
 $ignore = (string) file_get_contents($root . '/.gitignore');
 check('node_modules is ignored', str_contains($ignore, 'node_modules'));

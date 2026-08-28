@@ -8,9 +8,12 @@
 #   bash build.sh [version]
 #   bash build.sh 2026.08.25
 #
-# Unlike the HBAviewer build this one downloads nothing: every byte shipped is
-# in this repo. Keep it that way — a fetch here is a supply-chain surface on a
-# package that unpacks as root on someone else's server.
+# This build fetches exactly one thing: `npm ci` resolves frontend/ against
+# package-lock.json, which pins an integrity hash per package. Nothing else may
+# download anything. A fetch here is a supply-chain surface on a package that
+# unpacks as root on someone else's server, so the rule is not "no fetches" but
+# "no unpinned fetches, and no new sources" — do not add one without saying why
+# the lockfile does not cover it.
 
 set -e
 

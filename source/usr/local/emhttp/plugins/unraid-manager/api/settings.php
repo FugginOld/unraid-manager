@@ -133,15 +133,11 @@ function um_settings_validate(array $post): array {
         }
     }
 
-    /* Written back BLANK where the operator left it blank, so the setting keeps
-       following Unraid's rather than freezing at whatever it said today. The
-       checks above needed real numbers, which is why this is the last step. */
-    $stored = $thresholds;
-    foreach (array_keys($blank) as $key) {
-        $stored[$key] = '';
-    }
     if ($thresholds['capacity_watch'] >= $thresholds['capacity_high_water']) {
-        /* Identical rule and identical reasoning to the temperature pair above:
+        /* Identical rule and identical reasoning to the temperature pair above,
+           and it must sit BEFORE the $stored copy below: appended after it,
+           the both-seeded reset wrote to a $thresholds nobody read again, so a
+           legacy inverted pair survived every programmatic save forever:
            a watch level at or above the warning level can never be the one that
            fires. Without this the page saved 95/90 cleanly, redisplayed it, and
            config.py silently reset both - the daemon using 80/90 with nothing
@@ -156,6 +152,13 @@ function um_settings_validate(array $post): array {
         }
     }
 
+    /* Written back BLANK where the operator left it blank, so the setting keeps
+       following Unraid's rather than freezing at whatever it said today. The
+       checks above needed real numbers, which is why this is the last step. */
+    $stored = $thresholds;
+    foreach (array_keys($blank) as $key) {
+        $stored[$key] = '';
+    }
     return ['ok' => true, 'error' => null,
             'values' => ['db_path' => $path, 'poll_fast' => $fast,
                          'poll_slow' => $slow] + $stored];

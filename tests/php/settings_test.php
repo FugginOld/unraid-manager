@@ -75,9 +75,14 @@ check('thresholds are coerced to int', $r['values']['capacity_high_water'] === 8
 $storedDir = sys_get_temp_dir() . '/um_storedcfg_' . getmypid();
 @mkdir($storedDir, 0700, true);
 um_set_cfg_dir($storedDir);
+/* capacity_watch travels with the high-water mark: stored alone at 77 it is
+   BELOW the inherited watch level of 80, which is the inverted pair the rule
+   further down heals - and the healing would then be indistinguishable from
+   the erasure this check exists to catch. */
 file_put_contents($storedDir . '/manager.cfg',
     "db_path=/mnt/user/appdata/unraid-manager\npoll_fast=30\npoll_slow=600\n"
-    . "capacity_high_water=77\ntemp_warn=41\ntemp_crit=59\nerror_window_min=22\n");
+    . "capacity_watch=70\ncapacity_high_water=77\ntemp_warn=41\ntemp_crit=59\n"
+    . "error_window_min=22\n");
 check('a threshold omitted from the post preserves the stored value',
       um_settings_validate($good)['values']['capacity_high_water'] === 77);
 /* P1 exit finding F-8 changed what blank MEANS. It used to write the constant;
@@ -130,16 +135,29 @@ max=\"500\"
 check('an out-of-range value from another plugins file is dropped, as python drops it',
       um_unraid_thresholds(UM_THRESHOLDS, $dynDir . '/wild.cfg') === []);
 
-/* Unraid stores hot/max in whatever unit its own page names. Discarding 113 as
-   out-of-range would make "follow Unraid" quietly not follow on an F box. */
+/* A Fahrenheit box inherits NO temperature, matching daemon/config.py: we
+   cannot tell whether Unraid stores hot/max in F there or always in C, both
+   guesses are unsafe in opposite directions, and declining is safe under
+   either. Capacity is a percentage and is unaffected. */
 file_put_contents($dynDir . '/f.cfg', "[display]
 unit=\"F\"
-hot=\"113\"
-max=\"131\"
+hot=\"45\"
+max=\"55\"
+warning=\"70\"
+critical=\"90\"
 ");
 $f = um_unraid_thresholds(UM_THRESHOLDS, $dynDir . '/f.cfg');
-check('a fahrenheit box has its thresholds converted, not discarded',
-      $f['temp_warn'] === 45 && $f['temp_crit'] === 55);
+check('a fahrenheit box inherits no temperature threshold at all',
+      !array_key_exists('temp_warn', $f) && !array_key_exists('temp_crit', $f));
+check('but it still inherits the capacity percentages',
+      $f['capacity_watch'] === 70 && $f['capacity_high_water'] === 90);
+
+/* Fails closed on a key with no bound, the way python raises KeyError for the
+   same input - accepting it would diverge the two halves from silent-accept to
+   daemon-crash on a file neither of them owns. */
+check('a key with no bound is dropped, not accepted unchecked',
+      um_unraid_thresholds(['temp_warn' => [20, 99]], $dynDir . '/dynamix.cfg')
+      === ['temp_warn' => 45]);
 
 /* The capacity pair now gets the refusal the temperature pair always had.
    Saved 95/90 cleanly before this, then config.py silently reset both. */
@@ -242,6 +260,28 @@ check('the degenerate pair at the shared max names the inversion, not a bound',
 check('the degenerate pair at the shared min names the inversion, not a bound',
       str_contains(strtolower(um_settings_validate(
           array_merge($good, ['temp_warn' => '20', 'temp_crit' => '20']))['error']), 'critical'));
+/* The both-seeded branch, which the explicit-post refusal above cannot reach.
+   A legacy or hand-edited inverted pair already on flash, with NEITHER key in
+   the post: the save must heal it rather than write it back. It did not - the
+   guard was appended after `$stored = $thresholds`, so its reset wrote to a
+   copy nobody read again, and the inversion survived every programmatic save
+   while config.py silently reset both on each daemon start. The temperature
+   twin works because its block sits before the copy. */
+$invDir = sys_get_temp_dir() . '/um_invcfg_' . getmypid();
+@mkdir($invDir, 0700, true);
+um_set_cfg_dir($invDir);
+file_put_contents($invDir . '/manager.cfg',
+    "db_path=/mnt/user/appdata/unraid-manager\npoll_fast=30\npoll_slow=600\n"
+    . "capacity_watch=95\ncapacity_high_water=90\n");
+$healed = um_settings_validate([
+    'db_path' => '/mnt/user/appdata/unraid-manager', 'poll_fast' => '30', 'poll_slow' => '600',
+]);
+check('an inverted capacity pair already on flash is healed, not written back',
+      $healed['ok'] === true
+      && (int) $healed['values']['capacity_watch'] < (int) $healed['values']['capacity_high_water']);
+@unlink($invDir . '/manager.cfg'); @rmdir($invDir);
+um_set_cfg_dir($storedDir);
+
 check('capacity_high_water one below min is refused',
       um_settings_validate(array_merge($good, ['capacity_high_water' => '49']))['ok'] === false);
 /* The watch level travels with it: 50 is a legal high-water mark, but not

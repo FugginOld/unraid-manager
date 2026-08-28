@@ -117,15 +117,21 @@ def read_unraid_thresholds(path=DYNAMIX_CFG):
             continue
         out[ours] = number
 
-    # Unraid stores its disk temperatures in whatever unit its Date & Time
-    # page names, so on an F-configured box `hot="113"` means 45 C. Without
-    # this it fails the 20-99 bound and is silently discarded, and "follow
-    # Unraid's Disk Settings" quietly does not - which is worse than not
-    # offering to follow them at all.
+    # A box whose display unit is Fahrenheit inherits NO temperature at all.
+    #
+    # We do not know whether Unraid stores hot/max in Fahrenheit on such a box
+    # or always in Celsius with `unit` governing display only, and no test here
+    # can find out - it is a fact about dynamix, not about this code. Both
+    # guesses are unsafe, and in opposite directions: converting a Celsius 45
+    # gives 7 C and warns on every disk forever, while reading a Fahrenheit 95
+    # as Celsius gives a threshold that can never fire. Declining to inherit is
+    # the only choice that is safe under BOTH, because it falls back to our own
+    # 50/60 either way. Capacity is a percentage and is unaffected.
+    #
+    # Revisit with an operator who has a box set to F and can say which it is.
     if fahrenheit:
-        for key in ('temp_warn', 'temp_crit'):
-            if key in out:
-                out[key] = int(round((out[key] - 32) * 5.0 / 9.0))
+        out.pop('temp_warn', None)
+        out.pop('temp_crit', None)
 
     # Range-checked LAST, after any conversion. Another plugin's file is not
     # ours to trust: a value outside the band leaves our own default in place

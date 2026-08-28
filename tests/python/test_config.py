@@ -106,14 +106,21 @@ class TestManagerCfg(unittest.TestCase):
         self.assertEqual(80, cfg['capacity_watch'])
         self.assertEqual(90, cfg['capacity_high_water'])
 
-    def test_a_fahrenheit_box_has_its_thresholds_converted(self):
-        # Unraid stores hot/max in whatever unit its own page names. Discarding
-        # 113 as out-of-range would make "follow Unraid" quietly not, which is
-        # worse than not offering to follow at all.
-        dyn = self._dynamix('[display]\nunit="F"\nhot="113"\nmax="131"\n')
+    def test_a_fahrenheit_box_inherits_no_temperature_at_all(self):
+        # We cannot tell whether Unraid stores hot/max in F on such a box or
+        # always in C with `unit` governing display only, and no test here can
+        # find out - it is a fact about dynamix, not about this code.
+        # Converting a Celsius 45 would give 7 C and warn on every disk
+        # forever; reading a Fahrenheit 95 as Celsius would give a threshold
+        # that can never fire. Declining is the only choice safe under both.
+        dyn = self._dynamix('[display]\nunit="F"\nhot="45"\nmax="55"\n'
+                            'warning="70"\ncritical="90"\n')
         cfg = config.read_manager_cfg(os.path.join(self.dir, 'nope.cfg'), dynamix_path=dyn)
-        self.assertEqual(45, cfg['temp_warn'])
-        self.assertEqual(55, cfg['temp_crit'])
+        self.assertEqual(50, cfg['temp_warn'], 'our own default, not 45 and not 7')
+        self.assertEqual(60, cfg['temp_crit'])
+        # Capacity is a percentage: unaffected by the display unit.
+        self.assertEqual(70, cfg['capacity_watch'])
+        self.assertEqual(90, cfg['capacity_high_water'])
 
     def test_only_the_display_section_is_read(self):
         # common.php reads ['display'] only; without the same filter here a key
@@ -167,6 +174,13 @@ class TestUnraidKeyMirror(unittest.TestCase):
                          'parsed %d php rows, expected %d'
                          % (len(pairs), len(config.UNRAID_THRESHOLD_KEYS)))
         self.assertEqual(config.UNRAID_THRESHOLD_KEYS, pairs)
+
+    def test_every_inherited_key_has_a_bound(self):
+        # Adding a fifth entry to both key maps without adding it to
+        # THRESHOLD_BOUNDS/UM_THRESHOLDS leaves both mirrors green, and the two
+        # halves then diverge on that key from silent-accept to KeyError.
+        self.assertLessEqual(set(config.UNRAID_THRESHOLD_KEYS.values()),
+                             set(config.THRESHOLD_BOUNDS))
 
 
 class TestNodesCfg(unittest.TestCase):

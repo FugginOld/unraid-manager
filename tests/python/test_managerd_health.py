@@ -1,3 +1,4 @@
+import datetime
 import tempfile
 import unittest
 
@@ -245,6 +246,36 @@ class TestThermalOnAnEmptyArray(HealthCycleCase):
         m.run_cycle('a1b2', collector.FAST, 1000.0)
         self.assertEqual(health.UNKNOWN, self.health('thermal')['state'])
 
+    # ABSOLUTE seconds, not `INVENTORY_STALE_AFTER * poll_slow`. Deriving the
+    # boundary from the constant under test moves the test with it: the first
+    # version of these two did exactly that, and mutating the constant from 3
+    # to 100 - 16.6 hours, long enough for the failure to return for most of a
+    # day - left both green. With poll_slow at 600 the bound is 1800 seconds,
+    # and that number is written here so that changing it must be deliberate.
+    BOUND_SECONDS = 1800
+
+    def _inventory_aged(self, seconds, temp):
+        when = (datetime.datetime(2026, 8, 28, 12, 0, 0)
+                - datetime.timedelta(seconds=seconds)).strftime('%Y-%m-%dT%H:%M:%SZ')
+        store.upsert_state(self.conn, 'a1b2', 'disks', 'ok',
+                           payload={'disks': [{'device': '/dev/sda', 'temp': temp}]},
+                           fetched_at=when)
+        m = self._empty_array_manager()
+        m._update_health('a1b2', [], '2026-08-28T12:00:00Z')
+
+    def test_the_constant_is_the_bound_the_tests_below_assume(self):
+        self.assertEqual(3, managerd.Manager.INVENTORY_STALE_AFTER)
+        self.assertEqual(self.BOUND_SECONDS,
+                         managerd.Manager.INVENTORY_STALE_AFTER * self.cfg['poll_slow'])
+
+    def test_just_past_the_bound_is_refused(self):
+        self._inventory_aged(self.BOUND_SECONDS + 60, 61)
+        self.assertEqual(health.UNKNOWN, self.health('thermal')['state'])
+
+    def test_just_inside_the_bound_is_still_used(self):
+        self._inventory_aged(self.BOUND_SECONDS - 60, 41)
+        self.assertEqual(41, self.health('thermal')['value'])
+
     def test_a_recent_inventory_is_still_used(self):
         # The other side of the bound: one missed slow poll is ordinary, and
         # dropping to array-only on the first miss would flap an empty-array
@@ -278,8 +309,6 @@ class TestThermalOnAnEmptyArray(HealthCycleCase):
         self.assertIn('inventory', row['basis'])
 
 
-if __name__ == '__main__':
-    unittest.main()
 
 
 class TestThresholdsReachTheEvaluator(HealthCycleCase):
@@ -317,3 +346,6 @@ class TestThresholdsReachTheEvaluator(HealthCycleCase):
         m.run_cycle('a1b2', collector.FAST, 1030.0)
         self.assertEqual('ok', self.health('capacity')['state'])
 
+
+if __name__ == '__main__':
+    unittest.main()

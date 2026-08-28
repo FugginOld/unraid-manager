@@ -30,17 +30,23 @@ $um_csrf = $var['csrf_token'] ?? '';
           enumeration can take a minute or more.</span></td>
     </tr>
     <tr>
-      <td>Capacity warning at:</td>
-      <td><input type="number" id="um-capacity-high-water" min="50" max="99" value="90">
-        <span class="um-hint">Percent of the array used before a node is flagged.
-          Leave blank to restore the default (90).</span></td>
+      <td>Capacity watch / warning (%):</td>
+      <td><input type="number" id="um-capacity-watch" min="10" max="98" value="">
+        <input type="number" id="um-capacity-high-water" min="50" max="99" value="">
+        <span class="um-hint">Percent of the array used before a node is watched, then
+          flagged. <strong>Leave blank to follow this server&rsquo;s
+          Settings &rarr; Disk Settings</strong>, which is where you have already said
+          what counts as full.</span></td>
     </tr>
     <tr>
       <td>Disk temperature warm / critical (&deg;C):</td>
-      <td><input type="number" id="um-temp-warn" min="20" max="99" value="50">
-        <input type="number" id="um-temp-crit" min="20" max="99" value="60">
-        <span class="um-hint">Degrees C for the hottest disk on a node. Critical must be
-          above warm. Leave either blank to restore its default (50 / 60).</span></td>
+      <td><input type="number" id="um-temp-warn" min="20" max="99" value="">
+        <input type="number" id="um-temp-crit" min="20" max="99" value="">
+        <span class="um-hint">Degrees C for the hottest disk on a node, array-assigned
+          or not. Critical must be above warm. <strong>Leave blank to follow this
+          server&rsquo;s Settings &rarr; Disk Settings.</strong> These apply to every
+          node in the fleet: a peer&rsquo;s own disk settings live on the peer, and
+          nothing at tier 0 can read them.</span></td>
     </tr>
     <tr>
       <td>Disk error window:</td>

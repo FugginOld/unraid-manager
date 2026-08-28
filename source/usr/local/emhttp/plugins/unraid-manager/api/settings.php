@@ -14,10 +14,23 @@ const UM_POLL_MAX = 86400;
    settings_test.php and test_config.py each assert their own side. */
 const UM_THRESHOLDS = [
     'capacity_high_water' => [50, 99, 90],
+    'capacity_watch'      => [10, 98, 80],
     'temp_warn'           => [20, 99, 50],
     'temp_crit'           => [20, 99, 60],
     'error_window_min'    => [1, 1440, 15],
 ];
+
+/* What a blank field means: Unraid's own Disk Settings where it has an
+   opinion, our constant where it does not (F-8). Blank is STORED blank rather
+   than resolved to a number, so a later change in Unraid's settings is
+   followed instead of frozen at whatever it said the day this was saved. */
+function um_threshold_defaults(): array {
+    $out = [];
+    foreach (UM_THRESHOLDS as $key => [$min, $max, $default]) {
+        $out[$key] = $default;
+    }
+    return array_merge($out, um_unraid_thresholds());
+}
 
 function um_settings_get(): array {
     $cfg = um_read_ini_file(um_manager_cfg())[''] ?? [];
@@ -27,9 +40,21 @@ function um_settings_get(): array {
         'poll_fast' => (int) ($cfg['poll_fast'] ?? 30),
         'poll_slow' => (int) ($cfg['poll_slow'] ?? 600),
         'daemon' => $daemon,
+        /* What each threshold would be if left blank: Unraid's Disk Settings
+           where it has an opinion, our constant where it does not. The page
+           shows these as placeholders so "blank" is never a mystery (F-8). */
+        'inherited' => um_threshold_defaults(),
     ];
-    foreach (UM_THRESHOLDS as $key => [$min, $max, $default]) {
-        $out[$key] = (int) ($cfg[$key] ?? $default);
+    /* Three different facts, kept apart: the EFFECTIVE value the daemon will
+       use, what a blank field would inherit, and whether this key is currently
+       an explicit override at all. Collapsing them is what would make a blank
+       field indistinguishable from one that happens to equal the default. */
+    $out['overrides'] = [];
+    foreach (UM_THRESHOLDS as $key => [$min, $max, $unused]) {
+        $stored = (string) ($cfg[$key] ?? '');
+        $isOverride = $stored !== '' && is_numeric($stored);
+        $out['overrides'][$key] = $isOverride ? (int) $stored : null;
+        $out[$key] = $isOverride ? (int) $stored : $out['inherited'][$key];
     }
     return $out;
 }
@@ -68,12 +93,17 @@ function um_settings_validate(array $post): array {
        operator clearing the input box, which does restore the default - the
        two cases look identical only when nothing has been stored yet. */
     $onFlash = um_read_ini_file(um_manager_cfg())[''] ?? [];
-    $thresholds = $fromFlash = [];
-    foreach (UM_THRESHOLDS as $key => [$min, $max, $default]) {
+    $thresholds = $fromFlash = $blank = [];
+    $inherited = um_threshold_defaults();
+    foreach (UM_THRESHOLDS as $key => [$min, $max, $unused]) {
+        $default = $inherited[$key];
         $seeded = !array_key_exists($key, $post);
         $fromFlash[$key] = $seeded;
-        $raw = $seeded ? (string) ($onFlash[$key] ?? $default) : $post[$key];
-        if ($raw === '') { $thresholds[$key] = $default; continue; }
+        $raw = $seeded ? (string) ($onFlash[$key] ?? '') : $post[$key];
+        /* Blank means "follow Unraid": validated against the inherited value
+           so the temp_crit > temp_warn rule below still sees real numbers, but
+           written back blank so it keeps following. */
+        if ($raw === '') { $thresholds[$key] = $default; $blank[$key] = true; continue; }
         if (!is_numeric($raw) || (int) $raw < $min || (int) $raw > $max) {
             /* A seeded value came off flash, not off the form, so refusing it
                would make the Settings page unsaveable until someone hand-fixed
@@ -94,8 +124,8 @@ function um_settings_validate(array $post): array {
                until someone hand-fixed the file that broke it. Reset both, the
                way config.py:85-88 resets them, and let the operator's own
                submission stay the only thing that can be refused. */
-            $thresholds['temp_warn'] = UM_THRESHOLDS['temp_warn'][2];
-            $thresholds['temp_crit'] = UM_THRESHOLDS['temp_crit'][2];
+            $thresholds['temp_warn'] = $inherited['temp_warn'];
+            $thresholds['temp_crit'] = $inherited['temp_crit'];
         } else {
             return ['ok' => false, 'error' =>
                 'The critical temperature must be above the warning temperature, or one '
@@ -103,9 +133,16 @@ function um_settings_validate(array $post): array {
         }
     }
 
+    /* Written back BLANK where the operator left it blank, so the setting keeps
+       following Unraid's rather than freezing at whatever it said today. The
+       checks above needed real numbers, which is why this is the last step. */
+    $stored = $thresholds;
+    foreach (array_keys($blank) as $key) {
+        $stored[$key] = '';
+    }
     return ['ok' => true, 'error' => null,
             'values' => ['db_path' => $path, 'poll_fast' => $fast,
-                         'poll_slow' => $slow] + $thresholds];
+                         'poll_slow' => $slow] + $stored];
 }
 
 const UM_RC = '/usr/local/emhttp/plugins/unraid-manager/scripts/rc.unraid-manager';

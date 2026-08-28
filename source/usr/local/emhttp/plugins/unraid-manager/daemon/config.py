@@ -17,7 +17,30 @@ MANAGER_CFG = CFG_DIR + '/manager.cfg'
 NODES_CFG = CFG_DIR + '/nodes.cfg'
 KEYS_DIR = CFG_DIR + '/keys'
 
+DYNAMIX_CFG = '/boot/config/plugins/dynamix/dynamix.cfg'
+
+# Unraid's own Settings -> Disk Settings, which the operator has already filled
+# in, mapped onto ours. P1 exit finding F-8: shipping unrelated constants meant
+# two answers on one box to "how hot is too hot" - Raven said 45/55 in Unraid
+# and this daemon said 50/60, so a disk at 47 C was warm to Unraid and fine to
+# us.
+#
+# Read from the MANAGER's flash, and applied to every node: a peer's own disk
+# settings live on the peer and Tier 0 exposes no way to ask for them. That is
+# a fleet default taken from one box, not each box's own preference, and the
+# settings page says so.
+#
+# hotssd/maxssd (60/70) are deliberately not read: telling an SSD from a
+# spinner needs a rotational flag the physical enumeration does not carry, and
+# guessing from a model string would be worse than one conservative threshold.
+UNRAID_THRESHOLD_KEYS = {'hot': 'temp_warn', 'max': 'temp_crit',
+                         'warning': 'capacity_watch', 'critical': 'capacity_high_water'}
+
 MANAGER_DEFAULTS = {'db_path': '', 'poll_fast': 30, 'poll_slow': 600,
+                    # capacity_watch is the band below the high-water mark.
+                    # Unraid has both numbers; before F-8 this was a fixed
+                    # ten-point band under health.WATCH_BAND.
+                    'capacity_watch': 80,
                     # Health thresholds. Duplicated from health.DEFAULT_THRESHOLDS
                     # rather than imported: this module is the flash-config reader
                     # and must not depend on the evaluator. test_config.py asserts
@@ -27,8 +50,9 @@ MANAGER_DEFAULTS = {'db_path': '', 'poll_fast': 30, 'poll_slow': 600,
 
 # key -> (minimum, maximum), inclusive. Outside the range is nonsense and falls
 # back rather than producing an indicator that can never fire.
-THRESHOLD_BOUNDS = {'capacity_high_water': (50, 99), 'temp_warn': (20, 99),
-                    'temp_crit': (20, 99), 'error_window_min': (1, 1440)}
+THRESHOLD_BOUNDS = {'capacity_high_water': (50, 99), 'capacity_watch': (10, 98),
+                    'temp_warn': (20, 99), 'temp_crit': (20, 99),
+                    'error_window_min': (1, 1440)}
 
 
 def _clean(value):
@@ -66,27 +90,66 @@ def _as_int(value, default):
         return default
 
 
-def read_manager_cfg(path=MANAGER_CFG):
-    cfg = dict(MANAGER_DEFAULTS)
+def read_unraid_thresholds(path=DYNAMIX_CFG):
+    """Unraid's own disk thresholds, as our keys. Missing file -> {}.
+
+    Never raises and never partially applies nonsense: a value that is not an
+    integer in range is dropped, leaving our own default in place. This file is
+    written by another plugin's settings page and is not ours to trust blindly.
+    """
+    out = {}
+    for _section, key, value in _pairs(path):
+        ours = UNRAID_THRESHOLD_KEYS.get(key)
+        if ours is None:
+            continue
+        low, high = THRESHOLD_BOUNDS[ours]
+        try:
+            number = int(value)
+        except (TypeError, ValueError):
+            continue
+        if low <= number <= high:
+            out[ours] = number
+    return out
+
+
+def read_manager_cfg(path=MANAGER_CFG, dynamix_path=DYNAMIX_CFG):
+    """Our settings, over Unraid's disk settings, over our own constants.
+
+    An operator who has filled in Settings -> Disk Settings has already said
+    how hot is too hot; duplicating that judgement in a second place is what
+    F-8 named. A value set explicitly on OUR settings page still wins - it is
+    the fleet override for a manager whose own box is not representative.
+    """
+    defaults = dict(MANAGER_DEFAULTS)
+    defaults.update(read_unraid_thresholds(dynamix_path))
+    cfg = dict(defaults)
     for _section, key, value in _pairs(path):
         if key == 'db_path':
             cfg['db_path'] = value
         elif key in ('poll_fast', 'poll_slow'):
-            cfg[key] = _as_int(value, MANAGER_DEFAULTS[key])
+            cfg[key] = _as_int(value, defaults[key])
         elif key in THRESHOLD_BOUNDS:
-            cfg[key] = _as_int(value, MANAGER_DEFAULTS[key])
+            # A BLANK value means "inherit": the settings page writes every key
+            # on every save, so an empty one is the only way an operator can say
+            # "use Unraid's" after having once typed a number of their own.
+            cfg[key] = _as_int(value, defaults[key])
     if cfg['poll_fast'] < 5:
-        cfg['poll_fast'] = MANAGER_DEFAULTS['poll_fast']
+        cfg['poll_fast'] = defaults['poll_fast']
     if cfg['poll_slow'] < cfg['poll_fast']:
-        cfg['poll_slow'] = MANAGER_DEFAULTS['poll_slow']
+        cfg['poll_slow'] = defaults['poll_slow']
     for key, (low, high) in THRESHOLD_BOUNDS.items():
         if not low <= cfg[key] <= high:
-            cfg[key] = MANAGER_DEFAULTS[key]
+            cfg[key] = defaults[key]
     if cfg['temp_crit'] <= cfg['temp_warn']:
         # An inverted pair makes one of the two bands unreachable. Refuse the
         # pair rather than silently keeping half of a nonsensical setting.
-        cfg['temp_warn'] = MANAGER_DEFAULTS['temp_warn']
-        cfg['temp_crit'] = MANAGER_DEFAULTS['temp_crit']
+        cfg['temp_warn'] = defaults['temp_warn']
+        cfg['temp_crit'] = defaults['temp_crit']
+    if cfg['capacity_watch'] >= cfg['capacity_high_water']:
+        # Same rule for the capacity pair: a watch band at or above the
+        # high-water mark can never be the one that fires.
+        cfg['capacity_watch'] = defaults['capacity_watch']
+        cfg['capacity_high_water'] = defaults['capacity_high_water']
     return cfg
 
 

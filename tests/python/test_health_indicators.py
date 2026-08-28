@@ -53,9 +53,25 @@ class TestCapacity(unittest.TestCase):
         self.assertEqual(93.0, self.cap(93, 100).value)
 
     def test_thresholds_are_configurable(self):
-        loose = dict(health.DEFAULT_THRESHOLDS, capacity_high_water=99)
+        # Both knobs now, not one: Unraid has a warning AND a critical
+        # utilization threshold and the operator has filled both in (F-8), so
+        # the watch level stopped being a fixed ten points under the high-water
+        # mark. Raising only the critical one leaves the watch where it was.
+        loose = dict(health.DEFAULT_THRESHOLDS, capacity_high_water=99, capacity_watch=95)
         self.assertEqual(health.OK, health.evaluate_capacity(
             {'capacity': {'used': 80, 'total': 100}}, loose).state)
+
+    def test_the_watch_level_is_its_own_threshold(self):
+        tight = dict(health.DEFAULT_THRESHOLDS, capacity_high_water=90, capacity_watch=70)
+        self.assertEqual(health.WATCH, health.evaluate_capacity(
+            {'capacity': {'used': 72, 'total': 100}}, tight).state)
+
+    def test_a_config_with_no_watch_level_falls_back_to_the_old_band(self):
+        # A manager.cfg written before F-8 carries only the high-water mark.
+        legacy = {k: v for k, v in health.DEFAULT_THRESHOLDS.items()
+                  if k != 'capacity_watch'}
+        out = health.evaluate_capacity({'capacity': {'used': 85, 'total': 100}}, legacy)
+        self.assertEqual(health.WATCH, out.state)
 
     def test_the_real_golem_capture_is_warn(self):
         out = health.evaluate_capacity(array_payload(), self.T)

@@ -173,7 +173,7 @@ function um_read_ini_file(string $path): array {
 function um_render_manager_cfg(array $kv): string {
     $out = '';
     foreach (['db_path', 'poll_fast', 'poll_slow', 'capacity_high_water',
-              'temp_warn', 'temp_crit', 'error_window_min'] as $k) {
+              'capacity_watch', 'temp_warn', 'temp_crit', 'error_window_min'] as $k) {
         $out .= $k . '=' . str_replace(["\r", "\n"], '', (string) ($kv[$k] ?? '')) . "\n";
     }
     return $out;
@@ -247,6 +247,37 @@ function um_has_key(string $id): bool {
 function um_delete_key(string $id): void {
     $path = um_key_path($id);
     if ($path !== null) @unlink($path);
+}
+
+/* Unraid's own Settings -> Disk Settings, mapped onto our threshold keys.
+   P1 exit finding F-8: the operator has already said how hot is too hot, and
+   shipping unrelated constants gave one box two answers - Raven's Unraid said
+   45/55 while this plugin said 50/60, so a disk at 47 C was warm to one and
+   fine to the other.
+
+   Mirrors daemon/config.py's UNRAID_THRESHOLD_KEYS; test_config.py and
+   settings_test.php each assert their own side. hotssd/maxssd are deliberately
+   not read - telling an SSD from a spinner needs a rotational flag the
+   physical enumeration does not carry. */
+const UM_UNRAID_THRESHOLD_KEYS = [
+    'hot'      => 'temp_warn',
+    'max'      => 'temp_crit',
+    'warning'  => 'capacity_watch',
+    'critical' => 'capacity_high_water',
+];
+
+function um_unraid_thresholds(string $path = '/boot/config/plugins/dynamix/dynamix.cfg'): array {
+    $display = um_read_ini_file($path)['display'] ?? [];
+    $out = [];
+    foreach (UM_UNRAID_THRESHOLD_KEYS as $theirs => $ours) {
+        $raw = $display[$theirs] ?? null;
+        /* Another plugin's file: a value that is not a plain integer is
+           dropped, leaving our own default in place, rather than trusted. */
+        if ($raw !== null && $raw !== '' && ctype_digit((string) $raw)) {
+            $out[$ours] = (int) $raw;
+        }
+    }
+    return $out;
 }
 
 /* The timezone the BOX is set to, for endpoints to report so the pane can

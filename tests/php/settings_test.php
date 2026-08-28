@@ -80,8 +80,45 @@ file_put_contents($storedDir . '/manager.cfg',
     . "capacity_high_water=77\ntemp_warn=41\ntemp_crit=59\nerror_window_min=22\n");
 check('a threshold omitted from the post preserves the stored value',
       um_settings_validate($good)['values']['capacity_high_water'] === 77);
-check('a threshold present but empty restores the default even with a stored value on flash',
-      um_settings_validate(array_merge($good, ['capacity_high_water' => '']))['values']['capacity_high_water'] === 90);
+/* P1 exit finding F-8 changed what blank MEANS. It used to write the constant;
+   it now writes nothing, so the value keeps following Unraid's own Disk
+   Settings instead of freezing at whatever they said the day it was saved.
+   Storing the resolved number would look identical today and diverge the first
+   time the operator changed Unraid's setting. */
+check('a threshold present but empty is stored blank, so it keeps following Unraid',
+      um_settings_validate(array_merge($good, ['capacity_high_water' => '']))['values']['capacity_high_water'] === '');
+
+/* ── Unraid's own Disk Settings (F-8) ─────────────────────────────────────── */
+$dynDir = sys_get_temp_dir() . '/um_dynamix_' . getmypid();
+@mkdir($dynDir, 0700, true);
+file_put_contents($dynDir . '/dynamix.cfg',
+    "[display]
+hot=\"45\"
+max=\"55\"
+warning=\"70\"
+critical=\"90\"
+hotssd=\"60\"
+unit=\"C\"
+");
+$unraid = um_unraid_thresholds($dynDir . '/dynamix.cfg');
+check('the Unraid disk temperature thresholds map onto ours',
+      $unraid['temp_warn'] === 45 && $unraid['temp_crit'] === 55);
+check('the Unraid utilization thresholds map onto ours',
+      $unraid['capacity_watch'] === 70 && $unraid['capacity_high_water'] === 90);
+/* Telling an SSD from a spinner needs a rotational flag the physical
+   enumeration does not carry, so these are deliberately not read - reading
+   them would silently apply an SSD limit to a hard disk. */
+check('the SSD-specific thresholds are not borrowed for every disk',
+      !array_key_exists('temp_warn_ssd', $unraid) && count($unraid) === 4);
+check('a missing dynamix.cfg is simply no opinion, not an error',
+      um_unraid_thresholds($dynDir . '/nope.cfg') === []);
+file_put_contents($dynDir . '/junk.cfg', "[display]
+hot=\"warm-ish\"
+max=\"\"
+");
+check('a non-numeric value from another plugins file is ignored, not trusted',
+      um_unraid_thresholds($dynDir . '/junk.cfg') === []);
+@unlink($dynDir . '/dynamix.cfg'); @unlink($dynDir . '/junk.cfg'); @rmdir($dynDir);
 
 /* A hand-edited manager.cfg must not be able to make the Settings page
    unsaveable. The seeded values never passed through the form, so refusing them
@@ -248,6 +285,22 @@ check('a limit above the cap is clamped', count(um_events_query($db, 0, 5000)) =
 check('a zero limit returns nothing', um_events_query($db, 0, 0) === []);
 
 @rmdir($emptyDir);
+
+/* The page has to be able to REACH the new behaviour: an input that is never
+   rendered, or a value the save never sends, is a setting that does not exist.
+   Same class of hole as a green check on a screen nothing renders. */
+$page = (string) file_get_contents($base . '/UnraidManagerSettings.page');
+$js   = (string) file_get_contents($base . '/settings.js');
+check('the capacity watch level has an input on the page',
+      str_contains($page, 'um-capacity-watch'));
+check('the save sends it', str_contains($js, 'capacity_watch:'));
+check('the page says what a blank field falls back to',
+      str_contains($page, 'Disk Settings'));
+check('the page shows the inherited value as a placeholder',
+      str_contains($js, 'placeholder'));
+check('the page no longer hardcodes the old constants as its defaults',
+      !str_contains($page, 'restore the default (90)')
+      && !str_contains($page, 'its default (50 / 60)'));
 
 echo $fails === 0 ? "settings: all pass\n" : "settings: $fails FAILED\n";
 exit($fails === 0 ? 0 : 1);

@@ -150,13 +150,54 @@ class TestOverall(HealthCycleCase):
         m.run_cycle('a1b2', collector.FAST, 1000.0)
         self.assertEqual('degraded', self.health('overall')['state'])
 
-    def test_since_holds_while_the_state_does_not_change(self):
+    def _fake_clock(self):
+        """Give every cycle its own second, deterministically.
+
+        The previous version of the test below asserted that `overall`'s
+        `since` held across three cycles - but with the Golem fixture, capacity
+        escalates ok -> warn on the second cycle, so overall legitimately
+        becomes degraded and `since` SHOULD move. It passed only because all
+        three cycles ran inside one wall-clock second, which made the
+        re-stamped value byte-identical to the original. On a loaded machine it
+        failed about one run in six.
+
+        A test that passes because the clock did not tick is not testing what
+        it names, so the clock is controlled here and both directions are
+        asserted below.
+        """
+        ticks = iter(['2026-08-28T10:%02d:00Z' % m for m in range(10, 40)])
+        original = store.utcnow
+        store.utcnow = lambda: next(ticks)
+        self.addCleanup(setattr, store, 'utcnow', original)
+
+    def test_since_holds_for_an_indicator_whose_state_does_not_change(self):
+        self._fake_clock()
         m = self.manager()
         m.run_cycle('a1b2', collector.FAST, 1000.0)
-        first = self.health('overall')['since']
+        first = self.health('array_state')['since']
         m.run_cycle('a1b2', collector.FAST, 1030.0)
         m.run_cycle('a1b2', collector.FAST, 1060.0)
-        self.assertEqual(first, self.health('overall')['since'])
+        row = self.health('array_state')
+        self.assertEqual('ok', row['state'])
+        self.assertEqual(first, row['since'], 'since must not move while the state holds')
+        self.assertNotEqual(first, row['updated_at'],
+                            'updated_at must advance, or a stale row is invisible')
+
+    def test_since_moves_when_the_state_actually_changes(self):
+        # The other half, and the reason the old test could pass by accident:
+        # capacity escalates on the second cycle, so overall goes ok ->
+        # degraded and this timestamp is supposed to move.
+        self._fake_clock()
+        m = self.manager()
+        m.run_cycle('a1b2', collector.FAST, 1000.0)
+        first = self.health('overall')
+        m.run_cycle('a1b2', collector.FAST, 1030.0)
+        m.run_cycle('a1b2', collector.FAST, 1060.0)
+        second = self.health('overall')
+        self.assertEqual('ok', first['state'])
+        self.assertEqual('degraded', second['state'])
+        self.assertNotEqual(first['since'], second['since'],
+                            '"degraded for how long" must date from the change')
 
 
 class TestThermalOnAnEmptyArray(HealthCycleCase):

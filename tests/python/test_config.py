@@ -24,10 +24,71 @@ class TestManagerCfg(unittest.TestCase):
         self.assertEqual(900, cfg['poll_slow'])
 
     def test_missing_file_is_defaults(self):
-        cfg = config.read_manager_cfg(os.path.join(self.dir, 'nope.cfg'))
+        # dynamix_path is passed explicitly and points at nothing: without it
+        # this reads the REAL /boot/config/plugins/dynamix/dynamix.cfg when the
+        # suite runs on an Unraid box, and the expectation below would depend
+        # on that operator's Disk Settings.
+        cfg = config.read_manager_cfg(os.path.join(self.dir, 'nope.cfg'),
+                                      dynamix_path=os.path.join(self.dir, 'no-dynamix.cfg'))
         self.assertEqual({'db_path': '', 'poll_fast': 30, 'poll_slow': 600,
-                          'capacity_high_water': 90, 'temp_warn': 50,
-                          'temp_crit': 60, 'error_window_min': 15}, cfg)
+                          'capacity_high_water': 90, 'capacity_watch': 80,
+                          'temp_warn': 50, 'temp_crit': 60,
+                          'error_window_min': 15}, cfg)
+
+    def _dynamix(self, text):
+        path = os.path.join(self.dir, 'dynamix.cfg')
+        with open(path, 'w', encoding='utf-8') as fh:
+            fh.write(text)
+        return path
+
+    def test_unraid_disk_settings_become_the_defaults(self):
+        # P1 exit finding F-8. The operator filled in Settings -> Disk
+        # Settings; shipping unrelated constants gave one box two answers to
+        # "how hot is too hot" - Raven's Unraid said 45/55 while this daemon
+        # said 50/60, so a disk at 47 C was warm to one and fine to the other.
+        dyn = self._dynamix('[display]\nhot="45"\nmax="55"\n'
+                            'warning="70"\ncritical="90"\nhotssd="60"\n')
+        cfg = config.read_manager_cfg(os.path.join(self.dir, 'nope.cfg'), dynamix_path=dyn)
+        self.assertEqual(45, cfg['temp_warn'])
+        self.assertEqual(55, cfg['temp_crit'])
+        self.assertEqual(70, cfg['capacity_watch'])
+        self.assertEqual(90, cfg['capacity_high_water'])
+
+    def test_the_ssd_thresholds_are_not_borrowed_for_every_disk(self):
+        # hotssd/maxssd are 60/70 on Raven. Applying an SSD limit to a spinner
+        # needs a rotational flag the physical enumeration does not carry.
+        dyn = self._dynamix('[display]\nhotssd="60"\nmaxssd="70"\n')
+        cfg = config.read_manager_cfg(os.path.join(self.dir, 'nope.cfg'), dynamix_path=dyn)
+        self.assertEqual(50, cfg['temp_warn'])
+        self.assertEqual(60, cfg['temp_crit'])
+
+    def test_our_own_setting_still_overrides_unraids(self):
+        # The fleet override, for a manager whose own box is not representative.
+        dyn = self._dynamix('[display]\nhot="45"\nmax="55"\n')
+        path = os.path.join(self.dir, 'manager.cfg')
+        with open(path, 'w', encoding='utf-8') as fh:
+            fh.write('temp_warn=52\ntemp_crit=62\n')
+        cfg = config.read_manager_cfg(path, dynamix_path=dyn)
+        self.assertEqual(52, cfg['temp_warn'])
+
+    def test_a_blank_setting_means_follow_unraid(self):
+        # The settings page writes every key on every save, so blank is the
+        # only way to say "use Unraid's" after once typing a number.
+        dyn = self._dynamix('[display]\nhot="45"\nmax="55"\n')
+        path = os.path.join(self.dir, 'manager.cfg')
+        with open(path, 'w', encoding='utf-8') as fh:
+            fh.write('temp_warn=\ntemp_crit=\n')
+        cfg = config.read_manager_cfg(path, dynamix_path=dyn)
+        self.assertEqual(45, cfg['temp_warn'])
+        self.assertEqual(55, cfg['temp_crit'])
+
+    def test_an_out_of_range_unraid_value_is_ignored(self):
+        # Another plugin's file. A nonsense value must leave our own default in
+        # place rather than produce a threshold that can never fire.
+        dyn = self._dynamix('[display]\nhot="4"\nmax="500"\n')
+        cfg = config.read_manager_cfg(os.path.join(self.dir, 'nope.cfg'), dynamix_path=dyn)
+        self.assertEqual(50, cfg['temp_warn'])
+        self.assertEqual(60, cfg['temp_crit'])
 
     def test_junk_value_falls_back_to_default(self):
         p = self.write('manager.cfg', 'db_path=/mnt/x\npoll_fast=banana\n')

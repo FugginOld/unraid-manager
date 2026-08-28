@@ -24,6 +24,7 @@ Indicator = namedtuple('Indicator', 'state value basis')
 
 DEFAULT_THRESHOLDS = {
     'capacity_high_water': 90,   # percent used at which capacity is a warning
+    'capacity_watch': 80,        # ...and at which it is worth watching
     'temp_warn': 50,             # degrees C at which thermal is a watch
     'temp_crit': 60,             # degrees C at which thermal is a warning
     'error_window_min': 15,      # minutes of history disk_errors looks back over
@@ -67,9 +68,14 @@ def evaluate_capacity(array, thresholds):
 
     pct = round(used * 100.0 / total, 1)
     high = float(thresholds['capacity_high_water'])
+    # Unraid has its own warning/critical utilization pair and the operator has
+    # already filled it in (P1 exit F-8), so the watch level is a THRESHOLD now
+    # rather than a fixed ten points under the high-water mark. WATCH_BAND
+    # remains the fallback for a config that carries only the one number.
+    watch = float(thresholds.get('capacity_watch') or (high - WATCH_BAND))
     if pct >= high:
         return Indicator(WARN, pct, '%g%% used, high-water mark is %g%%' % (pct, high))
-    if pct >= high - WATCH_BAND:
+    if pct >= watch:
         return Indicator(WATCH, pct, '%g%% used, approaching %g%%' % (pct, high))
     return Indicator(OK, pct, '%g%% used' % pct)
 

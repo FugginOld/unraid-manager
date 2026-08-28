@@ -34,9 +34,15 @@
       document.getElementById('um-db-path').value = s.db_path || '';
       document.getElementById('um-poll-fast').value = s.poll_fast;
       document.getElementById('um-poll-slow').value = s.poll_slow;
-      document.getElementById('um-capacity-high-water').value = s.capacity_high_water;
-      document.getElementById('um-temp-warn').value = s.temp_warn;
-      document.getElementById('um-temp-crit').value = s.temp_crit;
+      /* An explicit override goes in the box; a blank box shows what it would
+         inherit as a placeholder, so "blank" is never a mystery (F-8). */
+      ['capacity_watch', 'capacity_high_water', 'temp_warn', 'temp_crit']
+        .forEach(function (key) {
+          var el = document.getElementById('um-' + key.replace(/_/g, '-'));
+          var override = (s.overrides || {})[key];
+          el.value = override === null || override === undefined ? '' : override;
+          el.placeholder = (s.inherited || {})[key];
+        });
       document.getElementById('um-error-window-min').value = s.error_window_min;
       var d = document.getElementById('um-daemon-status');
       if (s.daemon && s.daemon.ok) {
@@ -55,6 +61,7 @@
       db_path: document.getElementById('um-db-path').value,
       poll_fast: document.getElementById('um-poll-fast').value,
       poll_slow: document.getElementById('um-poll-slow').value,
+      capacity_watch: document.getElementById('um-capacity-watch').value,
       capacity_high_water: document.getElementById('um-capacity-high-water').value,
       temp_warn: document.getElementById('um-temp-warn').value,
       temp_crit: document.getElementById('um-temp-crit').value,

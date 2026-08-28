@@ -172,7 +172,8 @@ function um_read_ini_file(string $path): array {
 
 function um_render_manager_cfg(array $kv): string {
     $out = '';
-    foreach (['db_path', 'poll_fast', 'poll_slow'] as $k) {
+    foreach (['db_path', 'poll_fast', 'poll_slow', 'capacity_high_water',
+              'temp_warn', 'temp_crit', 'error_window_min'] as $k) {
         $out .= $k . '=' . str_replace(["\r", "\n"], '', (string) ($kv[$k] ?? '')) . "\n";
     }
     return $out;

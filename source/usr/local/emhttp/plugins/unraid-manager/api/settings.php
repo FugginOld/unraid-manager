@@ -10,15 +10,28 @@ require_once __DIR__ . '/../include/common.php';
 const UM_POLL_FAST_MIN = 5;
 const UM_POLL_MAX = 86400;
 
+/* key => [min, max, default]. Mirrors daemon/config.py's THRESHOLD_BOUNDS;
+   settings_test.php and test_config.py each assert their own side. */
+const UM_THRESHOLDS = [
+    'capacity_high_water' => [50, 99, 90],
+    'temp_warn'           => [20, 99, 50],
+    'temp_crit'           => [20, 99, 60],
+    'error_window_min'    => [1, 1440, 15],
+];
+
 function um_settings_get(): array {
     $cfg = um_read_ini_file(um_manager_cfg())[''] ?? [];
     $daemon = um_ctl(['cmd' => 'status'], 5.0);
-    return [
+    $out = [
         'db_path' => (string) ($cfg['db_path'] ?? ''),
         'poll_fast' => (int) ($cfg['poll_fast'] ?? 30),
         'poll_slow' => (int) ($cfg['poll_slow'] ?? 600),
         'daemon' => $daemon,
     ];
+    foreach (UM_THRESHOLDS as $key => [$min, $max, $default]) {
+        $out[$key] = (int) ($cfg[$key] ?? $default);
+    }
+    return $out;
 }
 
 function um_settings_validate(array $post): array {
@@ -48,8 +61,29 @@ function um_settings_validate(array $post): array {
         return ['ok' => false, 'error' => 'Slow poll interval must be at least the fast '
             . 'interval and at most ' . UM_POLL_MAX . ' seconds', 'values' => []];
     }
+    $thresholds = [];
+    foreach (UM_THRESHOLDS as $key => [$min, $max, $default]) {
+        $raw = $post[$key] ?? null;
+        if ($raw === null || $raw === '') { $thresholds[$key] = $default; continue; }
+        if (!is_numeric($raw)) {
+            return ['ok' => false, 'error' => "$key must be a number", 'values' => []];
+        }
+        $value = (int) $raw;
+        if ($value < $min || $value > $max) {
+            return ['ok' => false, 'error' => "$key must be between $min and $max",
+                    'values' => []];
+        }
+        $thresholds[$key] = $value;
+    }
+    if ($thresholds['temp_crit'] <= $thresholds['temp_warn']) {
+        return ['ok' => false, 'error' =>
+            'The critical temperature must be above the warning temperature, or one '
+            . 'of the two bands can never be reached.', 'values' => []];
+    }
+
     return ['ok' => true, 'error' => null,
-            'values' => ['db_path' => $path, 'poll_fast' => $fast, 'poll_slow' => $slow]];
+            'values' => ['db_path' => $path, 'poll_fast' => $fast,
+                         'poll_slow' => $slow] + $thresholds];
 }
 
 const UM_RC = '/usr/local/emhttp/plugins/unraid-manager/scripts/rc.unraid-manager';

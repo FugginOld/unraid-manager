@@ -34,6 +34,10 @@
       document.getElementById('um-db-path').value = s.db_path || '';
       document.getElementById('um-poll-fast').value = s.poll_fast;
       document.getElementById('um-poll-slow').value = s.poll_slow;
+      document.getElementById('um-capacity-high-water').value = s.capacity_high_water;
+      document.getElementById('um-temp-warn').value = s.temp_warn;
+      document.getElementById('um-temp-crit').value = s.temp_crit;
+      document.getElementById('um-error-window-min').value = s.error_window_min;
       var d = document.getElementById('um-daemon-status');
       if (s.daemon && s.daemon.ok) {
         d.textContent = 'Running. Up ' + s.daemon.uptime + 's, watching '
@@ -50,7 +54,11 @@
     post(SETTINGS, {
       db_path: document.getElementById('um-db-path').value,
       poll_fast: document.getElementById('um-poll-fast').value,
-      poll_slow: document.getElementById('um-poll-slow').value
+      poll_slow: document.getElementById('um-poll-slow').value,
+      capacity_high_water: document.getElementById('um-capacity-high-water').value,
+      temp_warn: document.getElementById('um-temp-warn').value,
+      temp_crit: document.getElementById('um-temp-crit').value,
+      error_window_min: document.getElementById('um-error-window-min').value
     }).then(function (r) {
       if (r.error) { text(msg, r.error, 'bad'); return; }
       text(msg, 'Saved.', 'good');

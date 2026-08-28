@@ -35,6 +35,44 @@ check('poll_slow equal to poll_fast is accepted', um_settings_validate(array_mer
 check('an absurd poll_fast is refused', um_settings_validate(array_merge($good, ['poll_fast' => '999999']))['ok'] === false);
 check('no key field is ever accepted here', !array_key_exists('key', um_settings_validate(array_merge($good, ['key' => 'x']))['values']));
 
+/* ── health thresholds ────────────────────────────────────────────────────── */
+/* A P0-era manager.cfg has none of the four threshold keys. Reading it must
+   yield the defaults, not nulls - this is what makes the plg's three-key seed
+   harmless rather than a second place to keep in sync. */
+$p0dir = sys_get_temp_dir() . '/um_p0cfg_' . getmypid();
+@mkdir($p0dir, 0700, true);
+um_set_cfg_dir($p0dir);
+file_put_contents($p0dir . '/manager.cfg',
+    "db_path=/mnt/user/appdata/unraid-manager\npoll_fast=30\npoll_slow=600\n");
+$p0 = um_settings_get();
+check('a P0-era manager.cfg defaults capacity_high_water', $p0['capacity_high_water'] === 90);
+check('a P0-era manager.cfg defaults temp_warn', $p0['temp_warn'] === 50);
+check('a P0-era manager.cfg defaults temp_crit', $p0['temp_crit'] === 60);
+check('a P0-era manager.cfg defaults error_window_min', $p0['error_window_min'] === 15);
+@unlink($p0dir . '/manager.cfg');
+@rmdir($p0dir);
+um_set_cfg_dir(UM_CFG_DIR_DEFAULT);
+
+$withThresholds = array_merge($good, ['capacity_high_water' => '85', 'temp_warn' => '45',
+                                      'temp_crit' => '55', 'error_window_min' => '30']);
+$r = um_settings_validate($withThresholds);
+check('thresholds are accepted', $r['ok'] === true);
+check('thresholds are coerced to int', $r['values']['capacity_high_water'] === 85);
+
+check('a missing threshold falls back to the default rather than failing',
+      um_settings_validate($good)['values']['capacity_high_water'] === 90);
+check('an out-of-range high water is refused',
+      um_settings_validate(array_merge($good, ['capacity_high_water' => '5']))['ok'] === false);
+check('a non-numeric threshold is refused',
+      um_settings_validate(array_merge($good, ['temp_warn' => 'warm']))['ok'] === false);
+/* An inverted pair makes one thermal band unreachable. */
+$r = um_settings_validate(array_merge($good, ['temp_warn' => '70', 'temp_crit' => '40']));
+check('crit below warn is refused', $r['ok'] === false);
+check('the refusal explains the inversion', str_contains(strtolower($r['error']), 'critical'));
+
+check('the rendered cfg carries the thresholds',
+      str_contains(um_render_manager_cfg($withThresholds), 'capacity_high_water=85'));
+
 /* ── daemon controls ──────────────────────────────────────────────────────── */
 /* The action reaches a shell, so the allow-list is the security boundary.
    start/stop/restart are exercised for real in the live-enrollment task; here

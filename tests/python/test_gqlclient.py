@@ -54,6 +54,33 @@ class TestParseResponse(unittest.TestCase):
             gqlclient.parse_response(504, self.load('error_504.html'))
         self.assertIn('504', str(ctx.exception))
 
+    def test_the_504_message_carries_no_markup(self):
+        """This string is rendered to the operator, verbatim, on the Disks tab.
+
+        Seen on Raven during the P1 exit trial: a stale label read
+
+          Golem: showing the disk list collected 2026-08-28, 5:52:49 PM EDT -
+          the latest poll did not complete (HTTP 504 Gateway Time-out from
+          nginx - the query took longer than the server allows (<html>
+          <head><title>504 Gateway Time-out</title></head> <body> <center><h1>
+          504 Gateway Time-out</h1></center> <hr><cente)).
+
+        The sentence already says what happened; 120 characters of nginx's
+        boilerplate, cut off mid-tag, only made it unreadable.
+        """
+        with self.assertRaises(gqlclient.TransportError) as ctx:
+            gqlclient.parse_response(504, self.load('error_504.html'))
+        message = str(ctx.exception)
+        self.assertNotIn('<', message)
+        self.assertIn('the query took longer than the server allows', message)
+
+    def test_an_unrecognised_non_json_body_still_shows_what_came_back(self):
+        # The opposite case: here the snippet is the ONLY clue about what the
+        # peer actually sent, so it stays.
+        with self.assertRaises(gqlclient.TransportError) as ctx:
+            gqlclient.parse_response(500, b'a totally unexpected thing')
+        self.assertIn('a totally unexpected thing', str(ctx.exception))
+
     def test_malformed_json_raises_transport_error(self):
         with self.assertRaises(gqlclient.TransportError):
             gqlclient.parse_response(200, self.load('error_malformed.txt'))

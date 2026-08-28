@@ -74,9 +74,15 @@ def parse_response(status, body):
         # a JSON parse error.
         snippet = ' '.join(text.split())[:120]
         if status == 504 or 'Gateway Time-out' in text:
+            # No snippet here. This string is rendered to the operator verbatim
+            # (the Disks tab's stale label), and nginx's 504 page is
+            # boilerplate - appending 120 characters of it, cut off mid-tag,
+            # only buried the sentence that actually says what happened. Seen
+            # on Raven during the P1 exit trial. The unrecognised case below
+            # keeps its snippet: there it is the only clue about what came back.
             raise TransportError(
                 'HTTP 504 Gateway Time-out from nginx - the query took longer than the '
-                'server allows (%s)' % snippet)
+                'server allows')
         raise TransportError('HTTP %s with a non-JSON body: %s' % (status, snippet))
 
     errors = doc.get('errors') or []

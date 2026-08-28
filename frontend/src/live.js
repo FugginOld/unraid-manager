@@ -2,7 +2,11 @@ import { ref, onUnmounted, getCurrentInstance } from 'vue'
 
 const CHANNEL = '/sub/unraid-manager'
 const FALLBACK_MS = 30000
-const STALE_MS = 180000
+// Exported so App.vue judges the AGE OF THE DATA against the same threshold
+// this module judges the age of the last response against (P1 exit, F-1).
+// Two copies of "three minutes" would drift, and the two conditions have to
+// mean the same thing to the operator.
+export const STALE_MS = 180000
 
 // One EventSource and two timers for the life of the page - not one per
 // caller. App.vue and each of Tasks 13-15's views call useLive(), and

@@ -15,9 +15,38 @@ function um_health_rows(SQLite3 $db): array {
     return $out;
 }
 
+/* How old the freshest thing in the fleet is, in seconds, against THIS box's
+   clock. P1 exit finding F-1: the pane's stale banner fired on
+   `Date.now() - lastGood`, and lastGood was stamped every time this endpoint
+   answered - but this endpoint reads only the database, so it answers happily
+   with managerd dead. Stopping the daemon for three minutes on Raven produced
+   no banner at all. The banner claimed "the manager has not answered" and was
+   measuring "the web server answered".
+
+   Computed here rather than in the browser: the client would have to compare
+   its own clock against a timestamp from this one, and a skewed browser clock
+   would then either banner a healthy fleet or hide a dead daemon.
+
+   null, never 0, when nothing has ever been collected - a fleet enrolled a
+   minute ago has no age, and reporting one would banner it. An unparseable
+   timestamp is null for the same reason: not knowing the age must not read as
+   knowing it is fresh. */
+function um_fleet_age(array $nodes): array {
+    $newest = null;
+    foreach ($nodes as $node) {
+        $seen = $node['last_seen'] ?? null;
+        if ($seen === null || $seen === '') continue;
+        $ts = strtotime((string) $seen);
+        if ($ts === false) continue;
+        if ($newest === null || $ts > $newest[0]) $newest = [$ts, (string) $seen];
+    }
+    if ($newest === null) return ['newest' => null, 'age' => null];
+    return ['newest' => $newest[1], 'age' => max(0, time() - $newest[0])];
+}
+
 function um_fleet_health(?SQLite3 $db): array {
     $empty = ['fleet' => ['nodes' => 0, 'ok' => 0, 'degraded' => 0, 'unknown' => 0],
-              'nodes' => []];
+              'nodes' => [], 'newest' => null, 'age' => null];
     if ($db === null) return $empty;
 
     $health = um_health_rows($db);
@@ -79,7 +108,8 @@ function um_fleet_health(?SQLite3 $db): array {
         $nodes[] = $out;
     }
 
-    return ['fleet' => ['nodes' => count($nodes)] + $counts, 'nodes' => $nodes];
+    return ['fleet' => ['nodes' => count($nodes)] + $counts, 'nodes' => $nodes]
+           + um_fleet_age($nodes);
 }
 
 if (PHP_SAPI !== 'cli') {

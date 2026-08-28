@@ -14,6 +14,13 @@ Run all of this **on the Unraid box**, as root. Do not build on Windows: exec
 bits on `rc.unraid-manager` and the event hooks do not survive, and `makepkg`
 only exists here.
 
+**`build.sh` needs node and npm**, because the pane is a Vue bundle built from
+source rather than committed (it refuses to package a stale or missing one).
+Stock Unraid ships neither; Raven has them at `/usr/local/bin` from a plugin.
+If your box has no npm the build stops with `npm not found and frontend/
+exists` — build on a Linux machine that has node and copy the `.txz` over, or
+take the artifact from the release workflow, which is the reference build.
+
 ```bash
 set +H                                    # stop bash expanding ! in the sed below
 
@@ -39,9 +46,24 @@ to read and fails with "XML file doesn't exist or xml parse error". Observed
 
 **Reinstalling.** `plugin install` refuses a plugin that is already registered,
 and `plugin update` resolves `pluginURL` — which points at `main` and will not
-have your changes. Use `plugin remove unraid-manager.plg`, re-stage the `.plg`
-(remove deletes it from flash), then install again. Your config, registry and
-keys survive a remove by design.
+have your changes. So: remove first, **then** write the `.plg`, then install.
+Your config, registry and keys survive a remove by design.
+
+The order is load-bearing and is not obvious from the prose above — `plugin
+remove` **deletes `/boot/config/plugins/unraid-manager.plg`**, so staging the
+`.plg` before the remove throws it away and the install fails with `XML file
+doesn't exist or xml parse error`, leaving the box with no plugin installed.
+That cost the first twenty minutes of the P1 exit trial. Paste this, not prose:
+
+```bash
+cp releases/unraid-manager.txz /boot/config/plugins/unraid-manager/
+plugin remove unraid-manager.plg 2>/dev/null      # deletes the .plg from flash
+
+MD5=$(md5sum /boot/config/plugins/unraid-manager/unraid-manager.txz | awk '{print $1}')
+sed 's|"00000000000000000000000000000000"|"'"$MD5"'"|' unraid-manager.plg \
+  > /boot/config/plugins/unraid-manager.plg
+plugin install /boot/config/plugins/unraid-manager.plg
+```
 
 **Patching one file while iterating.** `/usr/local/emhttp` is tmpfs, so a single
 file can be dropped in and picked up on the next request or daemon restart. Pin

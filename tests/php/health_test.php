@@ -103,7 +103,55 @@ check('a node with no notifications payload reports null, not zero',
 
 check('a null db answers empty rather than fataling',
       um_fleet_health(null) === ['fleet' => ['nodes' => 0, 'ok' => 0, 'degraded' => 0,
-                                             'unknown' => 0], 'nodes' => []]);
+                                             'unknown' => 0], 'nodes' => [],
+                                 'newest' => null, 'age' => null]);
+
+/* ── the age of the DATA, not of the request (P1 exit finding F-1) ──────────
+   The pane's stale banner used to fire on `Date.now() - lastGood`, where
+   lastGood was stamped whenever this endpoint answered - and this endpoint
+   reads only the database, so it answers happily with managerd dead. Stopping
+   the daemon for three minutes on Raven produced no banner at all: the banner
+   said "the manager has not answered" and measured "the web server answered".
+   The age is computed HERE, against the server's own clock, so a browser with
+   a skewed clock cannot mis-report it either way. */
+$fresh = um_fleet_health($db);
+check('the payload carries the newest reading in the fleet',
+      ($fresh['newest'] ?? null) === '2026-08-27T10:00:00Z');
+check('the payload carries how old that reading is, in seconds',
+      is_int($fresh['age'] ?? null)
+      && abs($fresh['age'] - (time() - strtotime('2026-08-27T10:00:00Z'))) <= 2);
+
+/* A node that has never been seen must not be read as "seen at the epoch",
+   which would report an age of half a century and banner a fresh enrolment. */
+$onlyNew = new SQLite3(':memory:');
+$onlyNew->enableExceptions(true);
+$onlyNew->exec('CREATE TABLE nodes(id TEXT PRIMARY KEY, name TEXT, address TEXT, port INTEGER,
+                tier INTEGER, enabled INTEGER, added_at TEXT, last_seen TEXT, api_key TEXT)');
+$onlyNew->exec('CREATE TABLE node_state(node_id TEXT, domain TEXT, status TEXT, error TEXT,
+                fetched_at TEXT, payload TEXT, PRIMARY KEY(node_id, domain))');
+$onlyNew->exec('CREATE TABLE node_health(node_id TEXT, indicator TEXT, state TEXT, value REAL,
+                basis TEXT, pending_state TEXT, pending_count INTEGER, since TEXT,
+                updated_at TEXT, PRIMARY KEY(node_id, indicator))');
+$onlyNew->exec("INSERT INTO nodes VALUES('n1','New','10.0.0.5',80,0,1,'2026-08-27T09:00:00Z',NULL,NULL)");
+$never = um_fleet_health($onlyNew);
+check('a fleet nothing has ever been collected from reports no age at all',
+      $never['newest'] === null && $never['age'] === null);
+/* An unparseable timestamp is not an age of "now" - that would read as fresh
+   data and suppress the banner, which is the failure mode this whole finding
+   is about. */
+$bad = new SQLite3(':memory:');
+$bad->enableExceptions(true);
+$bad->exec('CREATE TABLE nodes(id TEXT PRIMARY KEY, name TEXT, address TEXT, port INTEGER,
+            tier INTEGER, enabled INTEGER, added_at TEXT, last_seen TEXT, api_key TEXT)');
+$bad->exec('CREATE TABLE node_state(node_id TEXT, domain TEXT, status TEXT, error TEXT,
+            fetched_at TEXT, payload TEXT, PRIMARY KEY(node_id, domain))');
+$bad->exec('CREATE TABLE node_health(node_id TEXT, indicator TEXT, state TEXT, value REAL,
+            basis TEXT, pending_state TEXT, pending_count INTEGER, since TEXT,
+            updated_at TEXT, PRIMARY KEY(node_id, indicator))');
+$bad->exec("INSERT INTO nodes VALUES('n1','Bad','10.0.0.6',80,0,1,'2026-08-27T09:00:00Z','not a date',NULL)");
+$badAge = um_fleet_health($bad);
+check('an unreadable last_seen reports no age rather than a fresh one',
+      $badAge['age'] === null);
 
 $src = (string) file_get_contents($base . '/api/health.php');
 check('session gated', str_contains($src, 'um_require_session()'));

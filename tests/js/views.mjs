@@ -16,10 +16,11 @@ import { createCompiler, frontend, reporter } from './ssr.mjs'
 const viewsDir = path.join(frontend, 'src', 'views')
 const { check, done } = reporter('views')
 
-const ssr = createCompiler({
-  stubs: {
-    '../api.js': `
+const API_STUB = `
       import { ref } from 'vue'
+      // NodeDrawer.vue imports get() directly; rendering App.vue pulls it in
+      // through Overview.vue.
+      export async function get () { return globalThis.__um_get ?? {} }
       export function useEndpoint () {
         const f = globalThis.__um_fixture ?? {}
         return {
@@ -30,13 +31,25 @@ const ssr = createCompiler({
           refresh: async () => {},
         }
       }
-    `,
-    '../live.js': `
+    `
+const LIVE_STUB = `
       import { ref } from 'vue'
+      export const STALE_MS = 180000
       export function useLive () {
-        return { stale: ref(false), tick: () => {}, lastGood: ref(Date.now()) }
+        const f = globalThis.__um_fixture ?? {}
+        return { stale: ref(f.unreachable ?? false), tick: () => {},
+                 lastGood: ref(f.lastGood ?? Date.now()) }
       }
-    `,
+    `
+
+const ssr = createCompiler({
+  stubs: {
+    // App.vue imports these as './', its views as '../' - both must be stubbed
+    // or App.vue's own render pulls in the real fetch/EventSource/timers.
+    './api.js': API_STUB,
+    './live.js': LIVE_STUB,
+    '../api.js': API_STUB,
+    '../live.js': LIVE_STUB,
   },
 })
 
@@ -224,6 +237,59 @@ try {
   })
   check('an unreadable database does not also claim the fleet agrees on everything',
         !/Nothing differs/i.test(htmlDriftNoDb))
+  /* ── the shell's stale banner (P1 exit, F-1) ───────────────────────────
+     The blocking defect of the P1 exit trial, and nothing rendered App.vue in
+     any harness, which is how it survived two phases. health.php reads only
+     the database, so with managerd stopped it keeps answering 200 with old
+     rows: the transport clock never trips and the banner never appears. The
+     payload's own `age` is the only honest signal. */
+  const App = await ssr.load(path.join(frontend, 'src', 'App.vue'))
+  const fleet = { fleet: { nodes: 1, ok: 1, degraded: 0, unknown: 0 }, nodes: [] }
+
+  const htmlDaemonDead = await renderView(App, {
+    // The exact Raven case: the endpoint answers fine, the data is 20 minutes
+    // old, and nothing has failed from the browser's point of view.
+    data: { ...fleet, newest: '2026-08-28T19:34:38Z', age: 1200 },
+    unreachable: false,
+  })
+  check('a dead daemon banners even though every request succeeded',
+        /um-stale-banner/.test(htmlDaemonDead))
+  check('the banner says what is actually wrong - nothing new was collected',
+        /Nothing new has been collected/.test(htmlDaemonDead))
+  check('the banner names how old the newest reading is',
+        htmlDaemonDead.includes('20 minutes') && htmlDaemonDead.includes('2026-08-28T19:34:38Z'))
+  check('the banner does not claim the manager failed to answer, which it did',
+        !/has not been able to reach the server/.test(htmlDaemonDead))
+
+  const htmlFresh = await renderView(App, {
+    data: { ...fleet, newest: '2026-08-28T19:34:38Z', age: 12 },
+    unreachable: false,
+  })
+  check('fresh data does not banner', !/um-stale-banner/.test(htmlFresh))
+
+  /* A fleet enrolled a minute ago has collected nothing yet: age is null, not
+     zero and not "very old". Bannering it would make every first run look
+     broken for up to ten minutes. */
+  const htmlNeverCollected = await renderView(App, {
+    data: { ...fleet, newest: null, age: null }, unreachable: false,
+  })
+  check('a fleet nothing has been collected from yet does not banner',
+        !/um-stale-banner/.test(htmlNeverCollected))
+
+  /* The transport clock still matters on its own: php-fpm down, nginx down, a
+     500. Then there is no fresh payload to read an age from at all. */
+  const htmlUnreachable = await renderView(App, {
+    data: { ...fleet, newest: '2026-08-28T19:34:38Z', age: 12 },
+    unreachable: true,
+  })
+  check('an unreachable server still banners, with its own wording',
+        /um-stale-banner/.test(htmlUnreachable)
+        && /has not been able to reach the server/.test(htmlUnreachable))
+
+  const htmlShellNoDb = await renderView(App, { data: { ...fleet, newest: null, age: null },
+                                               dbUnreadable: true })
+  check('an unreadable database still gets its own banner',
+        /um-db-banner/.test(htmlShellNoDb))
 } finally {
   ssr.cleanup()
 }

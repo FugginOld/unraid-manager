@@ -18,8 +18,26 @@ const stale = ref(false)
 // A ref, not a private snapshot: the stale banner needs to say when the last
 // good response actually landed, the way P0's did.
 const lastGood = ref(Date.now())
-const callbacks = new Set()
+// A refcounted Map, not a Set: useEndpoint() memoises `refresh` per endpoint
+// name, so App.vue's own heartbeat call and a view's call for the same
+// endpoint (Tasks 13-15) register the SAME function object. A Set keyed by
+// that identity has only one entry for both of them - when the view unmounts
+// and its onUnmounted does callbacks.delete(refresh), it deletes App.vue's
+// registration too, permanently: 1 fetch per tick, then 0, forever. Counting
+// registrations and deleting only at zero keeps the shared entry alive for
+// as long as anyone - including App.vue, which never unmounts - still holds it.
+const callbacks = new Map()
 let started = false
+
+function register (refresh) {
+  callbacks.set(refresh, (callbacks.get(refresh) || 0) + 1)
+}
+
+function unregister (refresh) {
+  const count = (callbacks.get(refresh) || 0) - 1
+  if (count <= 0) callbacks.delete(refresh)
+  else callbacks.set(refresh, count)
+}
 
 function kick (cb) {
   return Promise.resolve().then(cb).then(
@@ -29,7 +47,7 @@ function kick (cb) {
 }
 
 function tick () {
-  for (const cb of callbacks) kick(cb)
+  for (const cb of callbacks.keys()) kick(cb)
 }
 
 function start () {
@@ -61,10 +79,11 @@ export function useLive (refresh) {
     // brand new callback never waits on the shared 30s timer, whether it is
     // the very first caller (page load) or the Nth (a tab switch mounting a
     // view mid-session).
-    callbacks.add(refresh)
+    register(refresh)
     // Only meaningful inside a component's setup(). App.vue's own call
-    // supplies a refresh too, so this also unregisters cleanly there.
-    if (getCurrentInstance()) onUnmounted(() => callbacks.delete(refresh))
+    // supplies a refresh too, but App.vue is the root and never unmounts, so
+    // its registration is never decremented away.
+    if (getCurrentInstance()) onUnmounted(() => unregister(refresh))
     kick(refresh)
   }
   start()

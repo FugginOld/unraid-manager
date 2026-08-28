@@ -32,7 +32,9 @@ function um_device_key(?string $device): string {
 }
 
 function um_fleet_disks(?SQLite3 $db): array {
-    if ($db === null) return ['disks' => [], 'spares' => [], 'stale' => []];
+    if ($db === null) {
+        return ['disks' => [], 'spares' => [], 'stale' => [], 'tz' => um_local_timezone()];
+    }
 
     $byNode = um_disk_payloads($db);
     $disks = $spares = $stale = [];
@@ -132,7 +134,11 @@ function um_fleet_disks(?SQLite3 $db): array {
         }
     }
 
-    return ['disks' => $disks, 'spares' => $spares, 'stale' => $stale];
+    /* The box's zone, so the stale labels can render their fetched_at as a
+       wall clock rather than a UTC instant (common.php's um_local_timezone,
+       frontend/src/time.js). */
+    return ['disks' => $disks, 'spares' => $spares, 'stale' => $stale,
+            'tz' => um_local_timezone()];
 }
 
 if (PHP_SAPI !== 'cli') {

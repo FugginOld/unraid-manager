@@ -2,12 +2,16 @@
 import { ref, computed } from 'vue'
 import { useEndpoint } from '../api.js'
 import { useLive } from '../live.js'
+import { localTime } from '../time.js'
 
 // Same memoised object App.vue and Overview.vue read (api.js): reading
 // error/dbUnreadable here is a second READ of a shared endpoint, not a second
 // fetch. useLive(refresh) adds this view's mount/unmount to the shared
 // refcount - it does not open a second stream (live.js).
 const { data, error, dbUnreadable, refresh } = useEndpoint('disks')
+// The box's zone, straight off this endpoint's own payload - the Disks screen
+// is reachable without Overview ever having loaded.
+const tz = computed(() => data.value?.tz ?? null)
 useLive(refresh)
 
 const sortKey = ref('node')
@@ -92,7 +96,7 @@ const spares = computed(() => data.value?.spares ?? [])
       <p v-for="entry in stale" :key="entry.node_id" class="um-node-stale">
         <template v-if="entry.fetched_at">
           {{ entry.node }}: showing the disk list collected
-          {{ entry.fetched_at }} — the latest poll did not complete
+          {{ localTime(entry.fetched_at, tz) }} — the latest poll did not complete
           ({{ entry.error }}).
         </template>
         <template v-else>

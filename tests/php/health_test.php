@@ -104,7 +104,8 @@ check('a node with no notifications payload reports null, not zero',
 check('a null db answers empty rather than fataling',
       um_fleet_health(null) === ['fleet' => ['nodes' => 0, 'ok' => 0, 'degraded' => 0,
                                              'unknown' => 0], 'nodes' => [],
-                                 'newest' => null, 'newest_local' => null, 'age' => null]);
+                                 'newest' => null, 'age' => null,
+                                 'tz' => um_local_timezone()]);
 
 /* ── the age of the DATA, not of the request (P1 exit finding F-1) ──────────
    The pane's stale banner used to fire on `Date.now() - lastGood`, where
@@ -143,18 +144,11 @@ check('the system symlink beats PHP\'s own (UTC) default',
 check('with nothing usable in the link, PHP\'s default is the fallback',
       um_local_timezone('/etc/not-a-zone') === date_default_timezone_get());
 
-/* 10:00Z in New York is 06:00 EDT - a four-hour error is exactly what printing
-   the UTC instant with a local label would have produced. */
-check('a UTC instant is rendered in the box\'s own zone',
-      um_format_local(strtotime('2026-08-27T10:00:00Z'), 'America/New_York')
-      === '2026-08-27 06:00:00 EDT');
-check('the rendered string names the zone, so it cannot be misread',
-      str_contains(um_format_local(strtotime('2026-08-27T10:00:00Z'), 'Europe/London'), 'BST'));
-check('a zone PHP does not know falls back to UTC instead of fataling',
-      str_contains(um_format_local(strtotime('2026-08-27T10:00:00Z'), 'Mars/Olympus'), 'UTC'));
-check('the payload carries the local rendering alongside the ISO instant',
-      is_string($fresh['newest_local'] ?? null)
-      && str_contains($fresh['newest_local'], '2026-08-27'));
+/* The zone travels with the payload; the PANE formats every instant with it
+   (frontend/src/time.js), so there is one mechanism rather than a formatted
+   twin of every timestamp. */
+check('the payload names the zone the box is set to',
+      is_string($fresh['tz'] ?? null) && $fresh['tz'] !== '');
 
 /* A node that has never been seen must not be read as "seen at the epoch",
    which would report an age of half a century and banner a fresh enrolment. */
@@ -170,7 +164,7 @@ $onlyNew->exec('CREATE TABLE node_health(node_id TEXT, indicator TEXT, state TEX
 $onlyNew->exec("INSERT INTO nodes VALUES('n1','New','10.0.0.5',80,0,1,'2026-08-27T09:00:00Z',NULL,NULL)");
 $never = um_fleet_health($onlyNew);
 check('a fleet nothing has ever been collected from reports no age at all',
-      $never['newest'] === null && $never['newest_local'] === null && $never['age'] === null);
+      $never['newest'] === null && $never['age'] === null);
 /* An unparseable timestamp is not an age of "now" - that would read as fresh
    data and suppress the banner, which is the failure mode this whole finding
    is about. */

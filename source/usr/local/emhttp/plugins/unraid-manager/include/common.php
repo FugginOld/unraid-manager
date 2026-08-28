@@ -249,6 +249,32 @@ function um_delete_key(string $id): void {
     if ($path !== null) @unlink($path);
 }
 
+/* The timezone the BOX is set to, for endpoints to report so the pane can
+   render stored UTC instants as a wall clock (frontend/src/time.js).
+
+   Unraid runs PHP with date.timezone unset, so date_default_timezone_get()
+   answers UTC on a box whose own clock says EDT - verified on Raven, where php
+   said 21:36 UTC and `date` said 17:36 EDT. Formatting against that would put
+   every timestamp in the pane four hours out and look entirely plausible. The
+   system zone lives in the /etc/localtime symlink, which points into the
+   zoneinfo tree and may be relative.
+
+   $link is injectable so the PRECEDENCE is testable off the box: on a dev
+   machine both branches answer UTC, and deleting the symlink lookup entirely
+   passed the whole suite until a test pinned it. */
+function um_zone_from_link(?string $link): ?string {
+    if (!is_string($link)) return null;
+    $at = strpos($link, 'zoneinfo/');
+    if ($at === false) return null;
+    $zone = substr($link, $at + strlen('zoneinfo/'));
+    return $zone === '' ? null : $zone;
+}
+
+function um_local_timezone(?string $link = null): string {
+    $link = $link ?? @readlink('/etc/localtime');
+    return um_zone_from_link($link) ?? date_default_timezone_get();
+}
+
 function um_public_node(array $row): array {
     /* An allow-list, not a blocklist: a column added to the nodes table later
        cannot leak by default. */

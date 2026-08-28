@@ -1,7 +1,8 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, provide, ref } from 'vue'
 import { useEndpoint } from './api.js'
 import { useLive, STALE_MS } from './live.js'
+import { localTime } from './time.js'
 import Overview from './views/Overview.vue'
 import Disks from './views/Disks.vue'
 import Drift from './views/Drift.vue'
@@ -37,11 +38,13 @@ const { stale: unreachable, lastGood } = useLive(refresh)
 // hide a dead one. null means nothing has ever been collected - a fleet
 // enrolled a minute ago, which must NOT banner.
 const age = computed(() => data.value?.age ?? null)
-// The server formats this one, in the BOX's zone: Unraid runs PHP with
-// date.timezone unset, and toLocaleString() here would render the VIEWER's
-// zone, which is only coincidentally the same. Falls back to the raw instant
-// rather than to nothing.
-const newest = computed(() => data.value?.newest_local ?? data.value?.newest ?? 'never')
+// The zone the BOX is set to, reported by every endpoint that carries a
+// timestamp. Provided app-wide so a card or a table deep in the tree renders
+// the same wall clock as this banner rather than the viewer's own zone
+// (frontend/src/time.js explains why that distinction matters).
+const tz = computed(() => data.value?.tz ?? null)
+provide('um-tz', tz)
+const newest = computed(() => localTime(data.value?.newest, tz.value))
 const dataStale = computed(() => age.value !== null && age.value * 1000 > STALE_MS)
 const stale = computed(() => unreachable.value || dataStale.value)
 

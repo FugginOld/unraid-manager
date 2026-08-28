@@ -1,7 +1,10 @@
 <script setup>
-import { ref, watch, onMounted, onUnmounted } from 'vue'
+import { ref, watch, onMounted, onUnmounted, inject } from 'vue'
 import { get } from '../api.js'
 import StatusChip from './StatusChip.vue'
+import { localTime } from '../time.js'
+
+const tz = inject('um-tz', null)
 
 const props = defineProps({ nodeId: { type: String, default: null } })
 const emit = defineEmits(['close'])
@@ -43,7 +46,7 @@ onUnmounted(() => document.removeEventListener('keydown', onKey))
                item 8). StatusChip's 'crit' state (Critical / red X) is the
                distinct-from-warn treatment available for it. -->
           <td><StatusChip :state="domain.status === 'error' ? 'crit' : domain.status" /></td>
-          <td>{{ domain.fetched_at || 'never' }}</td>
+          <td>{{ localTime(domain.fetched_at, tz) }}</td>
           <td class="um-hint">{{ domain.error || '' }}</td>
         </tr>
       </tbody>

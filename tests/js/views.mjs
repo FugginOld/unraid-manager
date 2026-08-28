@@ -167,8 +167,11 @@ try {
         !/collected/.test(htmlNeverPolled))
   check('a failed poll names the real error so the operator can act on it',
         htmlFailedPoll.includes('HTTP 504 from 10.0.0.9'))
+  /* Rendered as a wall clock, not as the stored UTC instant. This fixture
+     names no zone, so time.js falls back to UTC - clearly labelled, which is
+     the point: a timestamp with no zone on it is unreadable. */
   check('a failed poll says how old the data on screen is',
-        htmlFailedPoll.includes('2026-08-27T09:00:00Z'))
+        htmlFailedPoll.includes('2026-08-27, 09:00:00 UTC'))
   check('both stale entries name the node they are about',
         htmlNeverPolled.includes('Golem') && htmlFailedPoll.includes('Golem'))
 
@@ -249,8 +252,8 @@ try {
   const htmlDaemonDead = await renderView(App, {
     // The exact Raven case: the endpoint answers fine, the data is 20 minutes
     // old, and nothing has failed from the browser's point of view.
-    data: { ...fleet, newest: '2026-08-28T19:34:38Z',
-            newest_local: '2026-08-28 15:34:38 EDT', age: 1200 },
+    data: { ...fleet, newest: '2026-08-28T19:34:38Z', age: 1200,
+            tz: 'America/New_York' },
     unreachable: false,
   })
   check('a dead daemon banners even though every request succeeded',
@@ -263,18 +266,23 @@ try {
      Unraid runs PHP with date.timezone unset, so the server sends a rendering
      of its own and the pane must prefer it. */
   check('the banner shows the time in the zone the server named, not the raw instant',
-        htmlDaemonDead.includes('2026-08-28 15:34:38 EDT')
+        htmlDaemonDead.includes('2026-08-28, 15:34:38 EDT')
         && !htmlDaemonDead.includes('2026-08-28T19:34:38Z'))
+  /* 19:34 UTC is 15:34 in New York. Formatting without applying the zone -
+     or applying the VIEWER's - is a four-hour error that reads as plausible,
+     which is why this asserts the converted hour and not just the shape. */
+  check('the zone is actually applied, not merely appended',
+        !htmlDaemonDead.includes('19:34:38'))
   check('the banner does not claim the manager failed to answer, which it did',
         !/has not been able to reach the server/.test(htmlDaemonDead))
 
-  /* No local rendering (an older daemon, a payload missing the field): the raw
-     instant is still better than nothing. */
-  const htmlNoLocal = await renderView(App, {
+  /* A payload with no zone (an older daemon, or a reader that never got one):
+     UTC, labelled as UTC. Not blank, and not silently the viewer's zone. */
+  const htmlNoTz = await renderView(App, {
     data: { ...fleet, newest: '2026-08-28T19:34:38Z', age: 1200 }, unreachable: false,
   })
-  check('without a server rendering the banner falls back to the raw instant',
-        htmlNoLocal.includes('2026-08-28T19:34:38Z'))
+  check('with no zone named, the banner renders UTC and says so',
+        htmlNoTz.includes('2026-08-28, 19:34:38 UTC'))
 
   const htmlFresh = await renderView(App, {
     data: { ...fleet, newest: '2026-08-28T19:34:38Z', age: 12 },

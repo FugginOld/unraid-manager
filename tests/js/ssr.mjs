@@ -93,9 +93,18 @@ export function createCompiler ({ stubs = {} } = {}) {
       if (Object.prototype.hasOwnProperty.call(stubs, rel)) {
         return `from ${quote}${pathToFileURL(stubFor(rel)).href}${quote}`
       }
-      if (!rel.endsWith('.vue')) return whole
-      const depOut = compileSFCFile(path.resolve(path.dirname(absVuePath), rel))
-      return `from ${quote}${pathToFileURL(depOut).href}${quote}`
+      const depAbs = path.resolve(path.dirname(absVuePath), rel)
+      if (rel.endsWith('.vue')) {
+        return `from ${quote}${pathToFileURL(compileSFCFile(depAbs)).href}${quote}`
+      }
+      // A plain .js sibling that is not stubbed (time.js): point at the REAL
+      // file. Left as a relative specifier it resolves against the scratch dir
+      // inside frontend/node_modules and fails with ERR_MODULE_NOT_FOUND -
+      // loudly, but for a reason that has nothing to do with the test.
+      if (fs.existsSync(depAbs)) {
+        return `from ${quote}${pathToFileURL(depAbs).href}${quote}`
+      }
+      return whole
     })
     const ssrCode = tmpl.code.replace('export function ssrRender', 'function ssrRender')
 

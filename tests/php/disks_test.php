@@ -133,7 +133,13 @@ check('the api key sentinel does not escape',
       !str_contains(json_encode($out), 'SENTINEL-KEY-NOT-FOR-EXPORT'));
 
 check('a null db answers empty rather than fataling',
-      um_fleet_disks(null) === ['disks' => [], 'spares' => [], 'stale' => []]);
+      um_fleet_disks(null) === ['disks' => [], 'spares' => [], 'stale' => [],
+                                'tz' => um_local_timezone()]);
+/* The stale labels quote a fetched_at, and an operator reads a wall clock -
+   the pane renders it with this zone (frontend/src/time.js). This screen is
+   reachable without Overview ever having loaded, so it carries its own. */
+check('the payload names the zone the box is set to',
+      is_string(um_fleet_disks($db)['tz'] ?? null) && um_fleet_disks($db)['tz'] !== '');
 
 $src = (string) file_get_contents($base . '/api/disks.php');
 check('session gated', str_contains($src, 'um_require_session()'));

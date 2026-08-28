@@ -55,6 +55,28 @@ try {
   check('array_empty never renders "0%" (the exact regression verified wrong on Raven)',
         !htmlEmpty.includes('0%'))
 
+  /* A node never heard from says so in a word. Rendering an empty string
+     instead leaves "last seen" trailing off into nothing, which reads as a
+     layout bug rather than as a fact about the node - and the timestamp
+     formatter (time.js) is one shared helper away from every card. */
+  const htmlNeverSeen = await renderCard(baseNode({ last_seen: null }))
+  check('a node never seen renders the word "never", not an empty space',
+        /last seen\s*never/.test(htmlNeverSeen))
+  /* And a real timestamp is rendered as a wall clock, not as the stored UTC
+     instant. No zone is provided here (the card is rendered standalone), so
+     time.js falls back to UTC - labelled, which is the point. */
+  const htmlSeen = await renderCard(baseNode({ last_seen: '2026-08-28T19:34:38Z' }))
+  check('a real last-seen is rendered as a readable local time, not raw ISO',
+        htmlSeen.includes('2026-08-28, 19:34:38 UTC')
+        && !htmlSeen.includes('2026-08-28T19:34:38Z'))
+
+  /* "never" is a claim about the node; an unreadable timestamp is a claim
+     about us. A value we cannot parse is shown as it came, not relabelled
+     into a fact we do not have. */
+  const htmlBadStamp = await renderCard(baseNode({ last_seen: 'not-a-date' }))
+  check('an unreadable timestamp is shown as-is, never relabelled "never"',
+        htmlBadStamp.includes('not-a-date') && !/last seen\s*never/.test(htmlBadStamp))
+
   /* ── unknown-vs-failed: an unknown indicator must not colour the head chip ─ */
   const htmlUnknownIndicator = await renderCard(baseNode({
     state: 'ok',

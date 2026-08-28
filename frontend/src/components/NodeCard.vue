@@ -1,5 +1,12 @@
 <script setup>
+import { inject } from 'vue'
 import StatusChip from './StatusChip.vue'
+import { localTime } from '../time.js'
+
+// Provided by App.vue from the endpoint payload. Rendered standalone (a test
+// harness, or a future embed) there is no provider, so undefined falls through
+// to time.js's UTC default rather than throwing.
+const tz = inject('um-tz', null)
 
 defineProps({ node: { type: Object, required: true } })
 defineEmits(['open'])
@@ -101,7 +108,7 @@ function unreadText (unread) {
       <!-- fleet.js styled a never-seen node's cell as um-unknown - "we have
            not heard" gets the same distinct treatment here (fix round 1,
            item 8). -->
-      <span :class="{ 'um-unknown': !node.last_seen }">last seen {{ node.last_seen || 'never' }}</span>
+      <span :class="{ 'um-unknown': !node.last_seen }">last seen {{ localTime(node.last_seen, tz) }}</span>
     </div>
   </div>
 </template>

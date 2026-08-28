@@ -19,7 +19,7 @@ require_once __DIR__ . '/../include/common.php';
    INTERNAL_SERVER_ERROR in P0 - a wrong guess nulls `info`, the fast lane's
    most important payload, on every node at once. Introspecting `versions`
    against a live box first is tracked as a Task 10 follow-up. */
-const UM_DRIFT_VERSIONS = ['unraid', 'api', 'kernel'];
+const UM_DRIFT_VERSIONS = ['unraid', 'api', 'kernel', 'php', 'docker'];
 
 function um_drift_payloads(SQLite3 $db, string $domain): array {
     $out = [];

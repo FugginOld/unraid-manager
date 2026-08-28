@@ -30,11 +30,17 @@ $db->exec("INSERT INTO nodes VALUES('a1b2','Golem','1.2.3.4',1,0,1,'x','y','SENT
 $db->exec("INSERT INTO nodes VALUES('c3d4','Ash','1.2.3.6',1,0,1,'x','y','SENTINEL-KEY-NOT-FOR-EXPORT')");
 $db->exec("INSERT INTO nodes VALUES('d4e5','Bramble','1.2.3.7',1,0,1,'x','y','SENTINEL-KEY-NOT-FOR-EXPORT')");
 
+/* Captured from Golem via Raven on 2026-08-27, not invented. The physical
+   enumeration's `name` is a MODEL string and its `device` is a full path; the
+   previous fixture wrote 'name' => 'sdc', which the system never produces, and
+   that fiction hid a join that matched 0 of 72 disks on real hardware. The
+   serial key is a sentinel we add - the daemon does not store one. */
 $disks = json_encode(['count' => 1, 'spare_count' => 1,
-    'disks' => [['name' => 'sdc', 'device' => '/dev/sdc', 'vendor' => 'Seagate',
-                 'size' => 18000207600128, 'temp' => 36.0, 'smart_status' => 'OK',
-                 'interface' => 'SATA', 'serial' => 'SENTINEL-SERIAL-NOT-FOR-EXPORT']],
-    'spares' => [['name' => 'sdz', 'device' => '/dev/sdz', 'vendor' => 'WDC',
+    'disks' => [['name' => 'ST10000NM0226', 'device' => '/dev/sdc',
+                 'vendor' => 'Seagate', 'size' => 18000207600128, 'temp' => 36.0,
+                 'smart_status' => 'OK', 'interface' => 'SAS',
+                 'serial' => 'SENTINEL-SERIAL-NOT-FOR-EXPORT']],
+    'spares' => [['name' => 'MG07SCA14TE', 'device' => '/dev/sdz', 'vendor' => 'WDC',
                   'size' => 8001563222016, 'temp' => 31.0, 'smart_status' => 'OK',
                   'interface' => 'SATA', 'serial' => 'SENTINEL-SERIAL-NOT-FOR-EXPORT']]]);
 /* Golem's array payload has a second slot, 'sdd', with no matching physical
@@ -62,15 +68,21 @@ $out = um_fleet_disks($db);
 
 check('disks from every node are listed', count($out['disks']) === 3);
 $golem = array_values(array_filter($out['disks'],
-    fn($d) => $d['node'] === 'Golem' && $d['name'] === 'sdc'))[0];
+    fn($d) => $d['node'] === 'Golem' && $d['device'] === '/dev/sdc'))[0];
 $raven = array_values(array_filter($out['disks'], fn($d) => $d['node'] === 'Raven'))[0];
 $orphan = array_values(array_filter($out['disks'], fn($d) => $d['device'] === 'sdd'))[0];
 
 check('the node name travels with the row', $raven['node'] === 'Raven');
 check('vendor and size are carried', $golem['vendor'] === 'Seagate' && $golem['size'] === 18000207600128);
 check('device is carried', $golem['device'] === '/dev/sdc');
+/* The physical payload's `name` is a model string, so it is exposed as `model`.
+   Calling it `name` invited exactly the join this fixture used to hide. */
+check('the model is carried under a name that says what it is',
+      $golem['model'] === 'ST10000NM0226' && !array_key_exists('name', $golem));
+check('the join survives the two payloads spelling device differently',
+      $golem['slot'] === 'disk1');
 check('temp is carried', $golem['temp'] === 36);
-check('interface is carried', $golem['interface'] === 'SATA');
+check('interface is carried', $golem['interface'] === 'SAS');
 check('smart status is verbatim, not a verdict', $golem['smart_status'] === 'OK');
 check('the array slot is merged in by device', ($golem['slot'] ?? '') === 'disk1');
 check('error counters are merged in', ($golem['errors'] ?? null) === 2);

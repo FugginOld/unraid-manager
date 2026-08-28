@@ -53,10 +53,29 @@ class TestParseInfo(unittest.TestCase):
         self.assertEqual('2026-08-11T04:12:07.000Z', out['booted_at'])
         self.assertNotIn('uptime', out)
 
+    def test_package_versions_are_parsed(self):
+        # Field names read off Raven's own schema, not guessed: InfoVersions
+        # carries `packages: PackageVersions`, and php/docker are the two the
+        # design spec puts on the Drift screen.
+        out = collector.parse_info(context.fixture_json('seed/info.json')['data'])
+        self.assertEqual('8.4.23', out['php'])
+        self.assertEqual('29.5.3', out['docker'])
+
+    def test_an_empty_package_version_reads_as_not_reported(self):
+        # pm2 came back as '' from a real box. An empty string is not a version;
+        # left as-is every node would 'agree' on it and the drift row would
+        # render as a line of blanks that claims consensus.
+        out = collector.parse_info({'info': {'versions': {'packages':
+                                    {'php': '', 'docker': '29.5.3'}}}})
+        self.assertIsNone(out['php'])
+        self.assertEqual('29.5.3', out['docker'])
+
     def test_missing_versions_block_does_not_raise(self):
         out = collector.parse_info({'info': {'os': {'hostname': 'X'}}})
         self.assertEqual('X', out['hostname'])
         self.assertIsNone(out['unraid'])
+        self.assertIsNone(out['php'])
+        self.assertIsNone(out['docker'])
 
 
 class TestParseArray(unittest.TestCase):

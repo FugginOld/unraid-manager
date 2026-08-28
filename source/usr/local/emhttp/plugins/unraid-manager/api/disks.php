@@ -21,6 +21,16 @@ function um_disk_payloads(SQLite3 $db): array {
     return $out;
 }
 
+/* Both payloads identify a disk by device, but not in the same form: the
+   physical enumeration reports "/dev/sda" and array.disks reports "sdj". Reduce
+   both to the bare kernel name so the join has a single key. */
+function um_device_key(?string $device): string {
+    $device = trim((string) $device);
+    if ($device === '') return '';
+    $slash = strrpos($device, '/');
+    return $slash === false ? $device : substr($device, $slash + 1);
+}
+
 function um_fleet_disks(?SQLite3 $db): array {
     if ($db === null) return ['disks' => [], 'spares' => [], 'stale' => []];
 
@@ -55,21 +65,28 @@ function um_fleet_disks(?SQLite3 $db): array {
         if (!is_array($payload)) continue;
 
         /* array.disks carries slot and numErrors; the physical enumeration does
-           not. Join on device name, which both report. */
+           not. The two payloads name the same disk differently, verified live on
+           Raven 2026-08-27: the physical row's `name` is a MODEL string
+           ("ST10000NM0226") and its `device` is a full path ("/dev/sda"), while
+           array.disks reports a bare kernel name ("sdj"). Joining on anything but
+           the device basename matches nothing at all - the first cut joined the
+           physical name and produced 0 hits out of 72 disks on real hardware,
+           green the whole time against a fixture that had invented "name":"sdc". */
         $slots = [];
         $arrayPayload = json_decode((string) ($rows['array']['payload'] ?? ''), true);
         foreach ((is_array($arrayPayload) ? $arrayPayload['disks'] ?? [] : []) as $slot) {
-            if (!empty($slot['device'])) $slots[$slot['device']] = $slot;
+            $k = um_device_key($slot['device'] ?? null);
+            if ($k !== '') $slots[$k] = $slot;
         }
 
         $usedSlots = [];
         foreach ($payload['disks'] ?? [] as $disk) {
-            $key = $disk['name'] ?? '';
+            $key = um_device_key($disk['device'] ?? null);
             $slot = $slots[$key] ?? [];
             if ($key !== '' && isset($slots[$key])) $usedSlots[$key] = true;
             $disks[] = [
                 'node' => $node['name'], 'node_id' => $node['id'],
-                'name' => $disk['name'] ?? null, 'device' => $disk['device'] ?? null,
+                'model' => $disk['name'] ?? null, 'device' => $disk['device'] ?? null,
                 'vendor' => $disk['vendor'] ?? null, 'size' => $disk['size'] ?? null,
                 'temp' => $disk['temp'] ?? null,
                 'smart_status' => $disk['smart_status'] ?? null,
@@ -89,7 +106,7 @@ function um_fleet_disks(?SQLite3 $db): array {
             if (isset($usedSlots[$key])) continue;
             $disks[] = [
                 'node' => $node['name'], 'node_id' => $node['id'],
-                'name' => null, 'device' => $slot['device'] ?? null,
+                'model' => null, 'device' => $slot['device'] ?? null,
                 'vendor' => null, 'size' => null, 'temp' => null,
                 'smart_status' => null, 'interface' => null,
                 'slot' => $slot['slot'] ?? null,
@@ -106,7 +123,7 @@ function um_fleet_disks(?SQLite3 $db): array {
         }
         foreach ($payload['spares'] ?? [] as $spare) {
             $spares[] = ['node' => $node['name'], 'node_id' => $node['id'],
-                         'name' => $spare['name'] ?? null,
+                         'model' => $spare['name'] ?? null,
                          'device' => $spare['device'] ?? null,
                          'vendor' => $spare['vendor'] ?? null,
                          'size' => $spare['size'] ?? null,

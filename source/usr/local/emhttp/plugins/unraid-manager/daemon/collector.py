@@ -43,6 +43,7 @@ def parse_info(data):
     info = data.get('info') or {}
     os_ = info.get('os') or {}
     core = ((info.get('versions') or {}).get('core')) or {}
+    pkgs = ((info.get('versions') or {}).get('packages')) or {}
     return {
         'hostname': os_.get('hostname'),
         'release': os_.get('release'),
@@ -53,6 +54,15 @@ def parse_info(data):
         'unraid': core.get('unraid') or os_.get('release'),
         'api': core.get('api'),
         'kernel': core.get('kernel') or os_.get('kernel'),
+        # InfoVersions.packages, field names read off Raven's own schema on
+        # 2026-08-27 rather than guessed - guessing one is what made the API
+        # answer an entire query with INTERNAL_SERVER_ERROR in P0. The type
+        # also carries openssl/node/npm/pm2/git/nginx; only the two the design
+        # spec asks for are requested. pm2 came back as an empty string on a
+        # real box, so an empty version is normalised to None here and reads as
+        # "not reported" rather than as a value every node agrees on.
+        'php': pkgs.get('php') or None,
+        'docker': pkgs.get('docker') or None,
     }
 
 
@@ -207,7 +217,8 @@ DOMAINS = {}
 for _d in [
     _domain('info', FAST,
             '{ info { os { hostname release kernel uptime } '
-            'versions { core { unraid api kernel } } } }', parse_info),
+            'versions { core { unraid api kernel } packages { php docker } } } }',
+            parse_info),
     _domain('array', FAST,
             '{ array { state capacity { kilobytes { free used total } disks { free used total } } '
             'parityCheckStatus { status progress errors correcting paused running } '

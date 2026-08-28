@@ -47,7 +47,7 @@ $array = json_encode(['state' => 'STARTED',
                  'numErrors' => 0, 'status' => 'DISK_DSBL', 'size' => 4000787030016]]]);
 
 $db->exec("INSERT INTO node_state VALUES('a1b2','disks','ok',NULL,'2026-08-27T10:00:00Z','$disks')");
-$db->exec("INSERT INTO node_state VALUES('a1b2','array','ok',NULL,'2026-08-27T10:00:00Z','$array')");
+$db->exec("INSERT INTO node_state VALUES('a1b2','array','ok',NULL,'2026-08-27T09:00:00Z','$array')");
 /* Raven's disks 504'd: status unknown, but the last-good payload and its
    fetched_at are retained by upsert_state. */
 $db->exec("INSERT INTO node_state VALUES('b2c3','disks','unknown',
@@ -82,6 +82,12 @@ check('disks are ordered by node name', $out['disks'][0]['node'] === 'Golem');
 check('an orphaned array slot still appears', $orphan['slot'] === 'disk2');
 check('an orphan has no invented physical reading', $orphan['smart_status'] === null);
 check('an orphan carries its array_status', $orphan['array_status'] === 'DISK_DSBL');
+check('an orphan invents neither a temperature nor a capacity',
+      $orphan['temp'] === null && $orphan['size'] === null);
+/* The orphan row is built entirely from the array payload, so it must carry the
+   array domain's timestamp - not the disks domain's, which is a slower lane. */
+check('an orphan is aged by the array payload it came from',
+      $orphan['fetched_at'] === '2026-08-27T09:00:00Z');
 
 check('spares are listed separately', count($out['spares']) === 2);
 check('a spare carries its node', $out['spares'][0]['node'] === 'Golem');

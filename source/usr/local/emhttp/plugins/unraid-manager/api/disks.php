@@ -95,7 +95,13 @@ function um_fleet_disks(?SQLite3 $db): array {
                 'slot' => $slot['slot'] ?? null,
                 'errors' => $slot['numErrors'] ?? null,
                 'array_status' => $slot['status'] ?? null,
-                'fetched_at' => $diskRow['fetched_at'],
+                /* Every field on this row came from the array payload, and array
+                   is a FAST domain while disks is SLOW. Stamping it with the
+                   disks timestamp would misreport the age of what is shown -
+                   pessimistically most of the time, and in the wrong direction
+                   when array is failing on a retained payload while disks is
+                   current. */
+                'fetched_at' => $rows['array']['fetched_at'] ?? null,
             ];
         }
         foreach ($payload['spares'] ?? [] as $spare) {

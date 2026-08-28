@@ -16,6 +16,12 @@ for t in tests/php/*_test.php; do
     elif ! grep -q ': all pass$' <<< "$out"; then
         echo "!!! $t exited 0 without ever printing 'all pass' - treating as FAILED"
         fails=$((fails + 1))
+    elif grep -qE '^(PHP )?(Warning|Notice|Deprecated|Fatal error|Parse error):' <<< "$out"; then
+        # A guard whose only symptom is a diagnostic is otherwise unpinnable:
+        # remove it, the output is identical, the file still prints 'all pass'
+        # and exits 0. That is how an unguarded foreach shipped once already.
+        echo "!!! $t printed a PHP diagnostic - treating as FAILED"
+        fails=$((fails + 1))
     fi
 done
 if [ "$fails" -ne 0 ]; then

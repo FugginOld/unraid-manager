@@ -12,7 +12,7 @@ require_once __DIR__ . '/../include/common.php';
 /* docs/verification/tier0-coverage.md confirms `info` also exposes php and
    docker versions, so this list is not a platform limit - it is bounded by
    what daemon/collector.py's `info` query actually requests:
-   `versions { core { unraid api kernel } }` (collector.py:208-210). Widening
+   `versions { core { unraid api kernel } }` (collector.py:209-210). Widening
    it is not done here: tier0-coverage.md records only the GraphQL type names
    (CoreVersions/PackageVersions), not the field path, and guessing a field
    name is exactly what made the API answer the whole query with

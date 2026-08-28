@@ -56,7 +56,11 @@ check('cells are keyed by node id',
 /* Item 5: a version key no node has ever reported must produce no row at all
    - not a row full of nulls that would render as an empty line on the Drift
    screen. */
-check('a version key no node reports produces no row at all', !isset($rows['kernel']));
+/* Tied to the row list on purpose: without the in_array half this check also
+   passes when 'kernel' is simply not a row we ask for, which is a different
+   fact and not the one being asserted. */
+check('a version key no node reports produces no row at all',
+      !isset($rows['kernel']) && in_array('kernel', UM_DRIFT_VERSIONS, true));
 
 check('a plugin present everywhere is not divergent',
       $rows['plugin:ca.backup2.plg']['divergent'] === false);
@@ -142,6 +146,10 @@ check('versions differing only in trailing zeros are still divergent',
 
 check('a null db answers empty rather than fataling',
       um_drift_matrix(null)['rows'] === []);
+/* The Tier 0 plugin-version limit is a platform fact, so it has to be stated on
+   the unreadable-database path too - that is the path a fresh install sits on. */
+check('the tier 0 limit is declared even with no database',
+      um_drift_matrix(null)['plugin_versions_available'] === false);
 
 $src = (string) file_get_contents($base . '/api/drift.php');
 check('session gated', str_contains($src, 'um_require_session()'));

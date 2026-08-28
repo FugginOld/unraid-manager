@@ -134,7 +134,8 @@ check('the api key sentinel does not escape',
 
 check('a null db answers empty rather than fataling',
       um_fleet_disks(null) === ['disks' => [], 'spares' => [], 'stale' => [],
-                                'tz' => um_local_timezone()]);
+                                'tz' => um_local_timezone(),
+                                'clock12' => um_display_clock_12h()]);
 /* The stale labels quote a fetched_at, and an operator reads a wall clock -
    the pane renders it with this zone (frontend/src/time.js). This screen is
    reachable without Overview ever having loaded, so it carries its own. */

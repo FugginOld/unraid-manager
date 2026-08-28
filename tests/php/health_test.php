@@ -105,7 +105,8 @@ check('a null db answers empty rather than fataling',
       um_fleet_health(null) === ['fleet' => ['nodes' => 0, 'ok' => 0, 'degraded' => 0,
                                              'unknown' => 0], 'nodes' => [],
                                  'newest' => null, 'age' => null,
-                                 'tz' => um_local_timezone()]);
+                                 'tz' => um_local_timezone(),
+                                 'clock12' => um_display_clock_12h()]);
 
 /* ── the age of the DATA, not of the request (P1 exit finding F-1) ──────────
    The pane's stale banner used to fire on `Date.now() - lastGood`, where
@@ -149,6 +150,15 @@ check('with nothing usable in the link, PHP\'s default is the fallback',
    twin of every timestamp. */
 check('the payload names the zone the box is set to',
       is_string($fresh['tz'] ?? null) && $fresh['tz'] !== '');
+/* Unraid's own Settings -> Date & Time clock preference (dynamix.cfg
+   [display] time="%I:%M %p" on Raven). An operator who chose a 12-hour clock
+   should not be shown a 24-hour one by this pane. */
+check('the payload reports the clock preference', is_bool($fresh['clock12'] ?? null));
+check('a %I/%p time format is a 12-hour clock',
+      um_clock_is_12h('%I:%M %p') && um_clock_is_12h('%l:%M %P'));
+check('a %H/%R time format is not', !um_clock_is_12h('%H:%M') && !um_clock_is_12h('%R'));
+check('an unset format is 24-hour, not a guess',
+      !um_clock_is_12h(null) && !um_clock_is_12h(''));
 
 /* A node that has never been seen must not be read as "seen at the epoch",
    which would report an age of half a century and banner a fresh enrolment. */

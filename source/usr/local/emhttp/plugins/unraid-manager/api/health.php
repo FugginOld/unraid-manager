@@ -46,7 +46,8 @@ function um_fleet_age(array $nodes): array {
 
 function um_fleet_health(?SQLite3 $db): array {
     $empty = ['fleet' => ['nodes' => 0, 'ok' => 0, 'degraded' => 0, 'unknown' => 0],
-              'nodes' => [], 'newest' => null, 'age' => null, 'tz' => um_local_timezone()];
+              'nodes' => [], 'newest' => null, 'age' => null,
+              'tz' => um_local_timezone(), 'clock12' => um_display_clock_12h()];
     if ($db === null) return $empty;
 
     $health = um_health_rows($db);
@@ -112,7 +113,7 @@ function um_fleet_health(?SQLite3 $db): array {
        carries as a wall clock (frontend/src/time.js). One field, not a
        formatted twin of every timestamp. */
     return ['fleet' => ['nodes' => count($nodes)] + $counts, 'nodes' => $nodes,
-            'tz' => um_local_timezone()]
+            'tz' => um_local_timezone(), 'clock12' => um_display_clock_12h()]
            + um_fleet_age($nodes);
 }
 

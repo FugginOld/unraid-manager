@@ -276,6 +276,20 @@ try {
   check('the banner does not claim the manager failed to answer, which it did',
         !/has not been able to reach the server/.test(htmlDaemonDead))
 
+  /* Unraid's own clock preference, which an operator sets in Settings ->
+     Date & Time. Raven's dynamix.cfg says time="%I:%M %p"; showing a 24-hour
+     clock to that operator is what prompted this. Same instant, same zone,
+     both renderings asserted so neither can silently become the other. */
+  const htmlTwelve = await renderView(App, {
+    data: { ...fleet, newest: '2026-08-28T19:34:38Z', age: 1200,
+            tz: 'America/New_York', clock12: true },
+    unreachable: false,
+  })
+  check('a 12-hour box gets a 12-hour clock',
+        htmlTwelve.includes('3:34:38 PM') && !htmlTwelve.includes('15:34:38'))
+  check('the date half stays unambiguous whatever the clock',
+        htmlTwelve.includes('2026-08-28'))
+
   /* A payload with no zone (an older daemon, or a reader that never got one):
      UTC, labelled as UTC. Not blank, and not silently the viewer's zone. */
   const htmlNoTz = await renderView(App, {

@@ -7,6 +7,7 @@ import { localTime } from '../time.js'
 // harness, or a future embed) there is no provider, so undefined falls through
 // to time.js's UTC default rather than throwing.
 const tz = inject('um-tz', null)
+const clock12 = inject('um-clock12', false)
 
 defineProps({ node: { type: Object, required: true } })
 defineEmits(['open'])
@@ -108,7 +109,7 @@ function unreadText (unread) {
       <!-- fleet.js styled a never-seen node's cell as um-unknown - "we have
            not heard" gets the same distinct treatment here (fix round 1,
            item 8). -->
-      <span :class="{ 'um-unknown': !node.last_seen }">last seen {{ localTime(node.last_seen, tz) }}</span>
+      <span :class="{ 'um-unknown': !node.last_seen }">last seen {{ localTime(node.last_seen, tz, clock12) }}</span>
     </div>
   </div>
 </template>

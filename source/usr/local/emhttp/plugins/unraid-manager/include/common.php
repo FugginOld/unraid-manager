@@ -275,6 +275,31 @@ function um_local_timezone(?string $link = null): string {
     return um_zone_from_link($link) ?? date_default_timezone_get();
 }
 
+/* Unraid's Settings -> Date & Time writes strftime formats into dynamix.cfg's
+   [display] section. Raven, verified 2026-08-28: time="%I:%M %p" (a 12-hour
+   clock) and date="%c" (the "System Setting" placeholder).
+
+   Only the clock is read. Translating %c and the rest of the date formats into
+   something Intl speaks is a lookup table with a long tail, and the
+   alternative - formatting every timestamp server-side - is the field
+   proliferation this deliberately replaced. The pane renders YYYY-MM-DD, which
+   is unambiguous whatever the operator's locale, and honours the 12/24-hour
+   setting exactly.
+
+   Unset means 24-hour: an operator who has never chosen gets the unambiguous
+   one, not a guess. */
+function um_clock_is_12h(?string $format): bool {
+    $f = (string) $format;
+    /* %p is the AM/PM marker; %I and %l are the 12-hour hour. %H, %k and %R
+       are the 24-hour ones and match none of these. */
+    return str_contains($f, '%p') || str_contains($f, '%P')
+        || str_contains($f, '%I') || str_contains($f, '%l');
+}
+
+function um_display_clock_12h(string $path = '/boot/config/plugins/dynamix/dynamix.cfg'): bool {
+    return um_clock_is_12h(um_read_ini_file($path)['display']['time'] ?? null);
+}
+
 function um_public_node(array $row): array {
     /* An allow-list, not a blocklist: a column added to the nodes table later
        cannot leak by default. */

@@ -12,6 +12,7 @@ const { data, error, dbUnreadable, refresh } = useEndpoint('disks')
 // The box's zone, straight off this endpoint's own payload - the Disks screen
 // is reachable without Overview ever having loaded.
 const tz = computed(() => data.value?.tz ?? null)
+const clock12 = computed(() => data.value?.clock12 ?? false)
 useLive(refresh)
 
 const sortKey = ref('node')
@@ -96,7 +97,7 @@ const spares = computed(() => data.value?.spares ?? [])
       <p v-for="entry in stale" :key="entry.node_id" class="um-node-stale">
         <template v-if="entry.fetched_at">
           {{ entry.node }}: showing the disk list collected
-          {{ localTime(entry.fetched_at, tz) }} — the latest poll did not complete
+          {{ localTime(entry.fetched_at, tz, clock12) }} — the latest poll did not complete
           ({{ entry.error }}).
         </template>
         <template v-else>

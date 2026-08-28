@@ -43,8 +43,12 @@ const age = computed(() => data.value?.age ?? null)
 // the same wall clock as this banner rather than the viewer's own zone
 // (frontend/src/time.js explains why that distinction matters).
 const tz = computed(() => data.value?.tz ?? null)
+// Unraid's own Settings -> Date & Time clock preference, so the pane does not
+// show a 24-hour clock to an operator who set a 12-hour one.
+const clock12 = computed(() => data.value?.clock12 ?? false)
 provide('um-tz', tz)
-const newest = computed(() => localTime(data.value?.newest, tz.value))
+provide('um-clock12', clock12)
+const newest = computed(() => localTime(data.value?.newest, tz.value, clock12.value))
 const dataStale = computed(() => age.value !== null && age.value * 1000 > STALE_MS)
 const stale = computed(() => unreachable.value || dataStale.value)
 

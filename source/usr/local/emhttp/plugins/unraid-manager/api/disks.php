@@ -33,7 +33,8 @@ function um_device_key(?string $device): string {
 
 function um_fleet_disks(?SQLite3 $db): array {
     if ($db === null) {
-        return ['disks' => [], 'spares' => [], 'stale' => [], 'tz' => um_local_timezone()];
+        return ['disks' => [], 'spares' => [], 'stale' => [],
+                'tz' => um_local_timezone(), 'clock12' => um_display_clock_12h()];
     }
 
     $byNode = um_disk_payloads($db);
@@ -138,7 +139,7 @@ function um_fleet_disks(?SQLite3 $db): array {
        wall clock rather than a UTC instant (common.php's um_local_timezone,
        frontend/src/time.js). */
     return ['disks' => $disks, 'spares' => $spares, 'stale' => $stale,
-            'tz' => um_local_timezone()];
+            'tz' => um_local_timezone(), 'clock12' => um_display_clock_12h()];
 }
 
 if (PHP_SAPI !== 'cli') {

@@ -61,10 +61,21 @@ function um_settings_validate(array $post): array {
         return ['ok' => false, 'error' => 'Slow poll interval must be at least the fast '
             . 'interval and at most ' . UM_POLL_MAX . ' seconds', 'values' => []];
     }
+    /* A key absent from the post (a partial or programmatic save) must never
+       erase a threshold - that reopens the erasure path Task 4's deferral
+       about um_render_manager_cfg existed to close, just one field narrower.
+       Seed those from what's already on flash. A key present but empty is the
+       operator clearing the input box, which does restore the default - the
+       two cases look identical only when nothing has been stored yet. */
+    $onFlash = um_read_ini_file(um_manager_cfg())[''] ?? [];
     $thresholds = [];
     foreach (UM_THRESHOLDS as $key => [$min, $max, $default]) {
-        $raw = $post[$key] ?? null;
-        if ($raw === null || $raw === '') { $thresholds[$key] = $default; continue; }
+        if (!array_key_exists($key, $post)) {
+            $thresholds[$key] = (int) ($onFlash[$key] ?? $default);
+            continue;
+        }
+        $raw = $post[$key];
+        if ($raw === '') { $thresholds[$key] = $default; continue; }
         if (!is_numeric($raw)) {
             return ['ok' => false, 'error' => "$key must be a number", 'values' => []];
         }

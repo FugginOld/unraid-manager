@@ -158,3 +158,41 @@ class TestThresholds(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TestPhpBoundsMirror(unittest.TestCase):
+    """The settings form validates against its own copy of the bounds.
+
+    PHP's UM_THRESHOLDS and this module's THRESHOLD_BOUNDS/MANAGER_DEFAULTS are
+    the same contract written twice, and each side's suite pins only its own
+    numbers - so editing one table and its own tests leaves BOTH suites green
+    while the form accepts a value the daemon then silently discards to the
+    default. This is the only test in the repo that crosses the language
+    boundary, and it exists because nothing else can see that divergence.
+    """
+
+    PHP = os.path.join(os.path.dirname(__file__), '..', '..', 'source', 'usr',
+                       'local', 'emhttp', 'plugins', 'unraid-manager', 'api',
+                       'settings.php')
+
+    def php_thresholds(self):
+        import re
+        with open(self.PHP, encoding='utf-8') as fh:
+            src = fh.read()
+        block = re.search(r'const UM_THRESHOLDS = \[(.*?)\];', src, re.S)
+        self.assertIsNotNone(block, 'UM_THRESHOLDS not found in settings.php')
+        rows = re.findall(r"'(\w+)'\s*=>\s*\[\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\]",
+                          block.group(1))
+        # A parse that silently finds nothing would make every assertion below
+        # vacuous, which is the failure mode this whole test exists to prevent.
+        self.assertEqual(len(rows), 4, 'expected four threshold rows')
+        return {k: (int(lo), int(hi), int(default)) for k, lo, hi, default in rows}
+
+    def test_php_bounds_match_python(self):
+        php = self.php_thresholds()
+        self.assertEqual(set(php), set(config.THRESHOLD_BOUNDS))
+        for key, (lo, hi, default) in php.items():
+            self.assertEqual((lo, hi), config.THRESHOLD_BOUNDS[key],
+                             '%s bounds differ between settings.php and config.py' % key)
+            self.assertEqual(default, config.MANAGER_DEFAULTS[key],
+                             '%s default differs between settings.php and config.py' % key)

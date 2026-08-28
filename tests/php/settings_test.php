@@ -33,7 +33,14 @@ check('a non-numeric poll_fast is refused', um_settings_validate(array_merge($go
 check('poll_slow below poll_fast is refused', um_settings_validate(array_merge($good, ['poll_slow' => '10']))['ok'] === false);
 check('poll_slow equal to poll_fast is accepted', um_settings_validate(array_merge($good, ['poll_slow' => '30']))['ok'] === true);
 check('an absurd poll_fast is refused', um_settings_validate(array_merge($good, ['poll_fast' => '999999']))['ok'] === false);
-check('no key field is ever accepted here', !array_key_exists('key', um_settings_validate(array_merge($good, ['key' => 'x']))['values']));
+/* 'values' is built as an explicit literal, so checking array_key_exists alone
+   is unfalsifiable short of 'values' => $post. Carry a value through to the
+   rendered cfg as well, so a future refactor that dumps $post (or merges it)
+   into the written file is what this actually guards against. */
+$keyed = um_settings_validate(array_merge($good, ['key' => 'should-never-persist']));
+check('no key field is ever accepted into validated values', !array_key_exists('key', $keyed['values']));
+check('no key field leaks into the rendered cfg',
+      !str_contains(um_render_manager_cfg($keyed['values']), 'should-never-persist'));
 
 /* ── health thresholds ────────────────────────────────────────────────────── */
 /* A P0-era manager.cfg has none of the four threshold keys. Reading it must
@@ -59,8 +66,26 @@ $r = um_settings_validate($withThresholds);
 check('thresholds are accepted', $r['ok'] === true);
 check('thresholds are coerced to int', $r['values']['capacity_high_water'] === 85);
 
-check('a missing threshold falls back to the default rather than failing',
-      um_settings_validate($good)['values']['capacity_high_water'] === 90);
+/* Two different intentions look identical if the fixture has no stored value:
+   an absent key is a partial or programmatic save and must preserve whatever
+   is already on flash (never erase a threshold by not mentioning it); a
+   present-but-empty key is the operator clearing the input box, and that
+   still restores the default. Give the stored value a distinct number from
+   the default so the two paths can't be confused by coincidence. */
+$storedDir = sys_get_temp_dir() . '/um_storedcfg_' . getmypid();
+@mkdir($storedDir, 0700, true);
+um_set_cfg_dir($storedDir);
+file_put_contents($storedDir . '/manager.cfg',
+    "db_path=/mnt/user/appdata/unraid-manager\npoll_fast=30\npoll_slow=600\n"
+    . "capacity_high_water=77\ntemp_warn=41\ntemp_crit=59\nerror_window_min=22\n");
+check('a threshold omitted from the post preserves the stored value',
+      um_settings_validate($good)['values']['capacity_high_water'] === 77);
+check('a threshold present but empty restores the default even with a stored value on flash',
+      um_settings_validate(array_merge($good, ['capacity_high_water' => '']))['values']['capacity_high_water'] === 90);
+@unlink($storedDir . '/manager.cfg');
+@rmdir($storedDir);
+um_set_cfg_dir(UM_CFG_DIR_DEFAULT);
+
 check('an out-of-range high water is refused',
       um_settings_validate(array_merge($good, ['capacity_high_water' => '5']))['ok'] === false);
 check('a non-numeric threshold is refused',
@@ -78,18 +103,29 @@ check('the refusal explains the inversion', str_contains(strtolower($r['error'])
 check('an equal warn/crit pair is refused',
       um_settings_validate(array_merge($good, ['temp_warn' => '50', 'temp_crit' => '50']))['ok'] === false);
 
-check('an empty threshold falls back to the default rather than failing',
-      um_settings_validate(array_merge($good, ['capacity_high_water' => '']))['values']['capacity_high_water'] === 90);
-
 /* Boundary-exact checks: a value one *below* the bounds table's min, or one
    *above* its max, and the min/max value itself. A test that only tries a
    wildly out-of-range value (see 'an out-of-range high water is refused'
    above) still passes if the bound itself drifts by one - these pin the
    table's actual numbers, per key, mirroring daemon/config.py's
-   THRESHOLD_BOUNDS one entry at a time. temp_warn and temp_crit are paired
-   because of the inversion guard: temp_warn's own max (99) and temp_crit's
-   own min (20) can never be exercised in isolation since the pair also has
-   to satisfy crit > warn - the same tautology exists in daemon/config.py. */
+   THRESHOLD_BOUNDS one entry at a time. temp_warn's own max (99) and
+   temp_crit's own min (20) can never be *accepted* in isolation, because the
+   pair also has to satisfy crit > warn - the same tautology exists in
+   daemon/config.py. That does NOT make a change to those two bounds
+   unobservable, though: the range loop at the top of um_settings_validate
+   runs before the inversion guard, so at the degenerate equal pairs (99,99)
+   and (20,20) the two guards compete for the same rejection, and whichever
+   runs first names the reason. 'ok' is false in both cases either way - the
+   refusal TEXT is what a shifted bound would change, from an inversion
+   sentence to "must be between X and Y". Those two checks are below,
+   immediately after the equal-pair check above; together with the ordinary
+   boundary checks that follow, that closes the pair to 18/18. */
+check('the degenerate pair at the shared max names the inversion, not a bound',
+      str_contains(strtolower(um_settings_validate(
+          array_merge($good, ['temp_warn' => '99', 'temp_crit' => '99']))['error']), 'critical'));
+check('the degenerate pair at the shared min names the inversion, not a bound',
+      str_contains(strtolower(um_settings_validate(
+          array_merge($good, ['temp_warn' => '20', 'temp_crit' => '20']))['error']), 'critical'));
 check('capacity_high_water one below min is refused',
       um_settings_validate(array_merge($good, ['capacity_high_water' => '49']))['ok'] === false);
 check('capacity_high_water at min is accepted',

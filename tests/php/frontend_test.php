@@ -178,8 +178,14 @@ check('App.vue imports the live-updates module', str_contains($app, "live.js"));
    since the CSS always comes last. */
 check('the stale banner is rendered by the shell, above the tabs, not by a view',
       preg_match('#um-stale-banner.*?<nav\b#s', $appTemplate) === 1);
+/* Whole-file str_contains('lastGood') passes on the script's own destructure
+   (`const { stale, lastGood } = useLive(refresh)`) even after the banner
+   text stops using it - the same vacuous-substring shape as the dbUnreadable
+   checks above. Anchor on the stale-banner block itself. */
+preg_match('/<p\s+v-if="stale"[^>]*>.*?<\/p>/s', $appTemplate, $staleBannerMatch);
+$staleBannerBlock = $staleBannerMatch[0] ?? '';
 check('the stale banner names when the manager last answered',
-      str_contains($app, 'lastGood'));
+      str_contains($staleBannerBlock, 'lastGood'));
 check('the two banners are independent, not v-else-if siblings',
       !preg_match('/v-else-if\s*=\s*"stale"/', $app));
 $overviewStub = (string) @file_get_contents($src . '/views/Overview.vue');

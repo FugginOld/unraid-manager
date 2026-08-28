@@ -87,5 +87,68 @@ if (is_file($builtManifest)) {
           is_array($mf) && array_key_exists('src/main.js', $mf));
 }
 
+/* ── the app shell ────────────────────────────────────────────────────────── */
+$src  = $root . '/frontend/src';
+$api  = (string) @file_get_contents($src . '/api.js');
+$live = (string) @file_get_contents($src . '/live.js');
+$chip = (string) @file_get_contents($src . '/components/StatusChip.vue');
+$app  = (string) @file_get_contents($src . '/App.vue');
+
+check('the api client exists', $api !== '');
+check('requests carry the session cookie', str_contains($api, 'same-origin'));
+check('the api client never sends a key',
+      !preg_match('/[?&]key=/', $api) && !preg_match('/\bkey\s*:/', $api));
+
+check('live updates subscribe to the nchan channel', str_contains($live, '/sub/unraid-manager'));
+check('live updates use EventSource', str_contains($live, 'EventSource'));
+check('there is a polling fallback', str_contains($live, '30000'));
+check('there is a three-minute stale threshold', str_contains($live, '180000'));
+
+check('the chip pairs colour with a word',
+      str_contains($chip, 'OK') && str_contains($chip, 'Degraded')
+      && str_contains($chip, 'Unknown'));
+check('the chip pairs colour with a glyph', (bool) preg_match('/[\x{2713}\x{26A0}?]/u', $chip));
+check('unknown has its own treatment', str_contains($chip, 'um-unknown'));
+
+check('the shell has all three tabs',
+      str_contains($app, 'Overview') && str_contains($app, 'Disks')
+      && str_contains($app, 'Drift'));
+check('no router library was added',
+      !str_contains((string) file_get_contents($root . '/frontend/package.json'), 'vue-router'));
+
+/* ── amendment 1: the db flag ─────────────────────────────────────────────── */
+/* An unreadable database is byte-identical to a healthy empty fleet unless the
+   shell distinguishes them. Handled once in useEndpoint/App.vue, not per view. */
+check('the api client reads the db property off a response',
+      (bool) preg_match('/\bdb\s*===?\s*false\b|\.db\b/', $api));
+check('the api client exposes dbUnreadable distinct from error/loading',
+      str_contains($api, 'dbUnreadable') && str_contains($api, 'error')
+      && str_contains($api, 'loading'));
+check('App.vue references the dbUnreadable flag', str_contains($app, 'dbUnreadable'));
+check('App.vue renders a persistent database-unreadable banner',
+      str_contains($app, 'could not be read'));
+check('the db-unreadable banner is not wrapped in anything dismissible',
+      !preg_match('/dismiss|@click="[^"]*(close|hide|dismiss)/i', $app));
+check('the db-unreadable banner points at the settings page',
+      str_contains($app, 'UnraidManagerSettings'));
+
+/* ── amendment 2A: useLive must tear down / be a singleton ───────────────── */
+check('useLive registers per-caller teardown or is a module singleton',
+      str_contains($live, 'onUnmounted') || str_contains($live, 'started'));
+
+/* ── amendment 2B: the stale banner is page-wide ──────────────────────────── */
+check('App.vue imports the live-updates module', str_contains($app, "live.js"));
+check('the stale banner is rendered by the shell, above the tabs, not by a view',
+      preg_match('#um-stale-banner.*?um-tabs#s', $app) === 1);
+$overviewStub = (string) @file_get_contents($src . '/views/Overview.vue');
+check('the stale banner did not stay behind in Overview.vue',
+      !str_contains($overviewStub, 'stale'));
+
+/* ── amendment 2C: a malformed 200 is not a fresh refresh ─────────────────── */
+check('the api client imports its own get() rather than duplicating fetch',
+      substr_count($api, 'fetch(') === 1);
+check('useEndpoint guards on an expected top-level key before accepting a refresh',
+      str_contains($api, 'health') && str_contains($api, 'disks') && str_contains($api, 'rows'));
+
 echo $fails === 0 ? "frontend: all pass\n" : "frontend: $fails FAILED\n";
 exit($fails === 0 ? 0 : 1);

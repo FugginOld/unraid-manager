@@ -223,6 +223,9 @@ class Manager(object):
         self._down = set()                     # nodes already journalled as down
 
     # Seams the tests replace; production reads flash.
+    def _read_manager_cfg(self):
+        return config.read_manager_cfg()
+
     def _read_nodes(self):
         return config.read_nodes_cfg(config.NODES_CFG)
 
@@ -237,8 +240,39 @@ class Manager(object):
             row = self.conn.execute('SELECT * FROM nodes WHERE id=?', (node_id,)).fetchone()
         return dict(row) if row else None
 
+    # db_path is deliberately absent: repointing the database under a running
+    # daemon would mean reopening the connection every worker already holds.
+    # A db_path change still needs a restart, and the settings page says so.
+    RELOADABLE = ('poll_fast', 'poll_slow') + (
+        'capacity_high_water', 'temp_warn', 'temp_crit', 'error_window_min')
+
     def reload(self):
-        """Re-read the flash registry and make SQLite and the schedule match."""
+        """Re-read both flash files: the registry, and the tunables.
+
+        manager.cfg used to be read once at start, so every value the settings
+        page writes - the poll intervals and all four health thresholds - was
+        inert until the daemon restarted. Found on Raven 2026-08-27: saving
+        temp_warn=38 left a 46 C node reading `ok`, because the evaluator was
+        still holding the 50 it booted with. The page reports success, the file
+        on flash is correct, and nothing happens; there is no worse shape for a
+        settings bug.
+        """
+        try:
+            fresh = self._read_manager_cfg()
+        except Exception as exc:                    # a broken flash file
+            # Never let an unreadable manager.cfg take the registry reload down
+            # with it - the two halves are independent, and a node the operator
+            # just enrolled matters more than a tunable they did not change.
+            log.warning('reload: manager.cfg unreadable, keeping current settings: %s', exc)
+        else:
+            changed = {k: fresh[k] for k in self.RELOADABLE
+                       if k in fresh and fresh[k] != self.cfg.get(k)}
+            self.cfg.update(changed)
+            self.scheduler.poll_fast = int(self.cfg['poll_fast'])
+            self.scheduler.poll_slow = int(self.cfg['poll_slow'])
+            if changed:
+                log.info('reload: settings changed: %s',
+                         ', '.join('%s=%s' % kv for kv in sorted(changed.items())))
         nodes = self._read_nodes()
         with self._lock:
             result = store.sync_registry(self.conn, nodes)

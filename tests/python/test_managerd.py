@@ -43,13 +43,25 @@ class ManagerCase(unittest.TestCase):
         self.dir = tempfile.mkdtemp()
         self.conn = store.connect(self.dir)
         self.published = []
-        self.cfg = {'db_path': self.dir, 'poll_fast': 30, 'poll_slow': 600}
+        # Mirrors read_manager_cfg, which always returns every key with a
+        # default filled in - a partial cfg would let a test pass against a
+        # shape production never produces.
+        self.cfg = dict(config.MANAGER_DEFAULTS,
+                        db_path=self.dir, poll_fast=30, poll_slow=600)
 
     def manager(self, post_fn=None, nodes=(NODE,)):
-        m = managerd.Manager(self.conn, self.cfg, keys_dir=self.dir,
+        # dict(...) on purpose: Manager keeps the mapping it is handed, so
+        # sharing one with the test would let a mutation reach m.cfg without
+        # ever passing through reload().
+        m = managerd.Manager(self.conn, dict(self.cfg), keys_dir=self.dir,
                              post_fn=post_fn or good_post(),
                              publish_fn=self.published.append)
         m._read_nodes = lambda: list(nodes)          # inject the registry
+        # Stubbed for the same reason as _read_nodes: reload() re-reads
+        # manager.cfg, and without this the suite would read the operator's real
+        # /boot file when run on a box - green here only because /boot does not
+        # exist on the dev machine.
+        m._read_manager_cfg = lambda: dict(self.cfg)
         m._read_key = lambda node_id: KEY
         m.reload()
         return m
@@ -359,6 +371,52 @@ class TestLogging(unittest.TestCase):
 
     def tearDown(self):
         logging.getLogger('managerd').handlers = []
+
+
+
+
+class TestReloadRereadsSettings(ManagerCase):
+    """manager.cfg was read once at start, so the settings page was inert.
+
+    Found on Raven 2026-08-27: saving temp_warn=38 left a 46 C node reading
+    `ok` because the evaluator still held the 50 the daemon booted with. The
+    page reported success and the flash file was correct.
+    """
+
+    def test_a_changed_threshold_reaches_the_evaluator(self):
+        m = self.manager()
+        self.assertEqual(50, m.cfg['temp_warn'])
+        self.cfg['temp_warn'] = 38
+        m.reload()
+        self.assertEqual(38, m.cfg['temp_warn'])
+
+    def test_a_changed_poll_interval_reaches_the_scheduler(self):
+        m = self.manager()
+        self.assertEqual(30, m.scheduler.poll_fast)
+        self.cfg['poll_fast'] = 15
+        self.cfg['poll_slow'] = 900
+        m.reload()
+        self.assertEqual(15, m.scheduler.poll_fast)
+        self.assertEqual(900, m.scheduler.poll_slow)
+
+    def test_db_path_is_not_reloadable(self):
+        # Repointing the database under a running daemon would mean reopening a
+        # connection every worker already holds.
+        m = self.manager()
+        self.cfg['db_path'] = '/somewhere/else'
+        m.reload()
+        self.assertEqual(self.dir, m.cfg['db_path'])
+
+    def test_an_unreadable_manager_cfg_does_not_stop_the_registry_reload(self):
+        m = self.manager(nodes=())
+        def boom():
+            raise IOError('flash went away')
+        m._read_manager_cfg = boom
+        m._read_nodes = lambda: [NODE]
+        m.reload()
+        self.assertEqual([NODE['id']], [r['id'] for r in
+                         self.conn.execute('SELECT id FROM nodes')])
+        self.assertEqual(50, m.cfg['temp_warn'])
 
 
 if __name__ == '__main__':

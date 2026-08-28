@@ -129,6 +129,14 @@ try {
   check('unread: {0,0,0} renders the real zero breakdown, not the unknown treatment',
         htmlZero.includes('0 alert') && htmlZero.includes('0 warn') && htmlZero.includes('0 info'))
 
+  /* Found by a mis-aimed mutation: 'capacity unknown' is the third place the
+     card says "we cannot see this", and it was the only one unpinned. Every
+     unknown treatment must be visually distinct from healthy, not just the two
+     the amendments named. */
+  const htmlNoCap = await renderCard(baseNode({ capacity: null }))
+  check('an unreportable capacity gets the unknown treatment, not a hint',
+        /um-unknown[^>]*>\s*capacity unknown/.test(htmlNoCap))
+
   /* ── empty-array-vs-0% (Raven, constraint 3) ──────────────────────────── */
   const htmlEmpty = await renderCard(baseNode({ array_empty: true, capacity: { used: 0, total: 0 } }))
   check('array_empty renders "empty array"', htmlEmpty.includes('empty array'))

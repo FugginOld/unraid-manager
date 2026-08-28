@@ -65,13 +65,85 @@ check('an out-of-range high water is refused',
       um_settings_validate(array_merge($good, ['capacity_high_water' => '5']))['ok'] === false);
 check('a non-numeric threshold is refused',
       um_settings_validate(array_merge($good, ['temp_warn' => 'warm']))['ok'] === false);
+/* '(int) "warm"' casts to 0, which the range check below would also reject -
+   pin the actual error text so a dropped is_numeric guard cannot hide behind
+   that overlap and still read as "refused". */
+check('the non-numeric refusal names the reason, not a range violation',
+      str_contains(um_settings_validate(array_merge($good, ['temp_warn' => 'warm']))['error'],
+                   'must be a number'));
 /* An inverted pair makes one thermal band unreachable. */
 $r = um_settings_validate(array_merge($good, ['temp_warn' => '70', 'temp_crit' => '40']));
 check('crit below warn is refused', $r['ok'] === false);
 check('the refusal explains the inversion', str_contains(strtolower($r['error']), 'critical'));
+check('an equal warn/crit pair is refused',
+      um_settings_validate(array_merge($good, ['temp_warn' => '50', 'temp_crit' => '50']))['ok'] === false);
 
-check('the rendered cfg carries the thresholds',
+check('an empty threshold falls back to the default rather than failing',
+      um_settings_validate(array_merge($good, ['capacity_high_water' => '']))['values']['capacity_high_water'] === 90);
+
+/* Boundary-exact checks: a value one *below* the bounds table's min, or one
+   *above* its max, and the min/max value itself. A test that only tries a
+   wildly out-of-range value (see 'an out-of-range high water is refused'
+   above) still passes if the bound itself drifts by one - these pin the
+   table's actual numbers, per key, mirroring daemon/config.py's
+   THRESHOLD_BOUNDS one entry at a time. temp_warn and temp_crit are paired
+   because of the inversion guard: temp_warn's own max (99) and temp_crit's
+   own min (20) can never be exercised in isolation since the pair also has
+   to satisfy crit > warn - the same tautology exists in daemon/config.py. */
+check('capacity_high_water one below min is refused',
+      um_settings_validate(array_merge($good, ['capacity_high_water' => '49']))['ok'] === false);
+check('capacity_high_water at min is accepted',
+      um_settings_validate(array_merge($good, ['capacity_high_water' => '50']))['ok'] === true);
+check('capacity_high_water at max is accepted',
+      um_settings_validate(array_merge($good, ['capacity_high_water' => '99']))['ok'] === true);
+check('capacity_high_water one above max is refused',
+      um_settings_validate(array_merge($good, ['capacity_high_water' => '100']))['ok'] === false);
+
+check('temp_warn one below min is refused',
+      um_settings_validate(array_merge($good, ['temp_warn' => '19', 'temp_crit' => '60']))['ok'] === false);
+check('temp_warn at min is accepted',
+      um_settings_validate(array_merge($good, ['temp_warn' => '20', 'temp_crit' => '21']))['ok'] === true);
+
+check('temp_crit at max is accepted',
+      um_settings_validate(array_merge($good, ['temp_warn' => '98', 'temp_crit' => '99']))['ok'] === true);
+check('temp_crit one above max is refused',
+      um_settings_validate(array_merge($good, ['temp_warn' => '97', 'temp_crit' => '100']))['ok'] === false);
+
+check('error_window_min one below min is refused',
+      um_settings_validate(array_merge($good, ['error_window_min' => '0']))['ok'] === false);
+check('error_window_min at min is accepted',
+      um_settings_validate(array_merge($good, ['error_window_min' => '1']))['ok'] === true);
+check('error_window_min at max is accepted',
+      um_settings_validate(array_merge($good, ['error_window_min' => '1440']))['ok'] === true);
+check('error_window_min one above max is refused',
+      um_settings_validate(array_merge($good, ['error_window_min' => '1441']))['ok'] === false);
+
+check('the rendered cfg carries capacity_high_water',
       str_contains(um_render_manager_cfg($withThresholds), 'capacity_high_water=85'));
+check('the rendered cfg carries temp_warn',
+      str_contains(um_render_manager_cfg($withThresholds), 'temp_warn=45'));
+check('the rendered cfg carries temp_crit',
+      str_contains(um_render_manager_cfg($withThresholds), 'temp_crit=55'));
+check('the rendered cfg carries error_window_min',
+      str_contains(um_render_manager_cfg($withThresholds), 'error_window_min=30'));
+
+/* A stored (non-default) threshold must round-trip back out of um_settings_get
+   unchanged - not just fall through to the default, which the P0-cfg test
+   above cannot tell apart from a read path that ignores the file entirely. */
+$fullDir = sys_get_temp_dir() . '/um_fullcfg_' . getmypid();
+@mkdir($fullDir, 0700, true);
+um_set_cfg_dir($fullDir);
+file_put_contents($fullDir . '/manager.cfg',
+    "db_path=/mnt/user/appdata/unraid-manager\npoll_fast=30\npoll_slow=600\n"
+    . "capacity_high_water=77\ntemp_warn=41\ntemp_crit=59\nerror_window_min=22\n");
+$stored = um_settings_get();
+check('um_settings_get reads back a stored capacity_high_water', $stored['capacity_high_water'] === 77);
+check('um_settings_get reads back a stored temp_warn', $stored['temp_warn'] === 41);
+check('um_settings_get reads back a stored temp_crit', $stored['temp_crit'] === 59);
+check('um_settings_get reads back a stored error_window_min', $stored['error_window_min'] === 22);
+@unlink($fullDir . '/manager.cfg');
+@rmdir($fullDir);
+um_set_cfg_dir(UM_CFG_DIR_DEFAULT);
 
 /* ── daemon controls ──────────────────────────────────────────────────────── */
 /* The action reaches a shell, so the allow-list is the security boundary.

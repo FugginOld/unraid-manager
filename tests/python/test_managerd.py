@@ -1,5 +1,6 @@
 import logging
 import os
+import socket
 import tempfile
 import threading
 import unittest
@@ -309,6 +310,78 @@ class TestNchanEndpoint(unittest.TestCase):
 
     def test_empty_input_returns_none(self):
         self.assertIsNone(managerd.nchan_endpoint(''))
+
+
+class TestPublishOver(unittest.TestCase):
+    """The publish REQUEST, not just the discovery of where to send it.
+
+    Nothing exercised _publish_over until the P1 exit trial, and on Raven every
+    nudge it had ever sent came back `403 missing nchan_message_buffer_length
+    value` - Unraid's publisher location reads that length from a QUERY
+    ARGUMENT (`nchan_message_buffer_length $arg_buffer_length`), and we sent
+    none. Live updates had never once worked, in two phases, because the reply
+    was read into a buffer and dropped on the floor.
+
+    Split into two pure functions rather than tested through a real socket:
+    ctl.py made the same call for the same reason, and AF_UNIX does not exist
+    on every machine this suite runs on.
+    """
+
+    def test_the_publish_path_carries_a_buffer_length(self):
+        line = managerd._publish_request({'probe': 1}).split(b'\r\n')[0]
+        self.assertIn(b'buffer_length=', line)
+        self.assertIn(b'/pub/' + managerd.NCHAN_CHANNEL.encode(), line)
+
+    def test_the_buffer_length_is_a_number_nginx_will_accept(self):
+        # `nchan_message_buffer_length $arg_buffer_length` - an empty or
+        # non-numeric value is the 403 this whole class exists for.
+        line = managerd._publish_request({'probe': 1}).split(b'\r\n')[0].decode()
+        value = line.split('buffer_length=')[1].split()[0].split('&')[0]
+        self.assertTrue(value.isdigit() and int(value) >= 1, line)
+
+    def test_the_message_is_the_body(self):
+        request = managerd._publish_request({'node_id': 'a1b2', 'domains': ['array']})
+        head, _, body = request.partition(b'\r\n\r\n')
+        self.assertIn(b'"node_id":"a1b2"', body)
+        self.assertIn(b'Content-Length: ' + str(len(body)).encode(), head)
+
+    def test_a_refused_publish_raises_so_the_caller_can_report_it(self):
+        # Verbatim from Raven, 2026-08-28. Swallowing this is what let a dead
+        # feature look healthy in the daemon log for two whole phases.
+        with self.assertRaises(OSError):
+            managerd._publish_check(
+                b'HTTP/1.1 403 Forbidden\r\nContent-Length: 41\r\n\r\n'
+                b'missing nchan_message_buffer_length value')
+
+    def test_the_refusal_reason_survives_into_the_error(self):
+        with self.assertRaises(OSError) as caught:
+            managerd._publish_check(b'HTTP/1.1 403 Forbidden\r\n\r\nnope')
+        self.assertIn('403', str(caught.exception))
+
+    def test_201_and_202_are_both_accepted(self):
+        managerd._publish_check(b'HTTP/1.1 201 Created\r\n\r\nqueued messages: 1')
+        managerd._publish_check(b'HTTP/1.1 202 Accepted\r\n\r\nok')
+
+    def test_a_silent_socket_is_not_a_success(self):
+        # recv() returning nothing means we never saw an acceptance. Reading it
+        # as one is how the old code turned every failure into a success.
+        with self.assertRaises(OSError):
+            managerd._publish_check(b'')
+
+    def test_an_unparseable_reply_is_not_a_success(self):
+        with self.assertRaises(OSError):
+            managerd._publish_check(b'garbage\r\n\r\n')
+
+    def test_a_refused_publish_turns_publishing_off_without_escaping_the_cycle(self):
+        # The Manager wrapper keeps its existing contract: one bad publish
+        # disables publishing and never propagates out of a poll cycle.
+        def boom(_message):
+            raise OSError('403 Forbidden')
+        m = managerd.Manager.__new__(managerd.Manager)
+        m.publishing = True
+        m.publish_fn = boom
+        m._publish({'probe': 1})
+        self.assertFalse(m.publishing)
 
 
 class TestStatusAndHandlers(ManagerCase):

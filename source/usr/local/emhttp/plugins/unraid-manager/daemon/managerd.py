@@ -182,19 +182,54 @@ def nchan_endpoint(servers_conf_text):
     return match.group(1) if match else None
 
 
+# nginx reads the channel's buffer length out of the QUERY STRING:
+# Unraid's publisher location is `nchan_message_buffer_length $arg_buffer_length`,
+# so a POST without one is refused outright with
+# `403 missing nchan_message_buffer_length value`. Verified on Raven during the
+# P1 exit trial, where every nudge the daemon had ever sent - across two whole
+# phases - had been rejected, while the log said "nchan publisher at
+# /var/run/nginx.socket" at every startup and the browser fell back to its 30s
+# timer. 1: a nudge carries no data, so only the newest one is ever worth
+# keeping.
+PUBLISH_BUFFER_LENGTH = 1
+
+
+def _publish_request(message):
+    """The exact bytes we POST for one nudge."""
+    body = json.dumps(message, separators=(',', ':')).encode('utf-8')
+    path = ('/pub/%s?buffer_length=%d' % (NCHAN_CHANNEL, PUBLISH_BUFFER_LENGTH)).encode()
+    return (b'POST ' + path + b' HTTP/1.0\r\n'
+            b'Content-Type: application/json\r\n'
+            b'Content-Length: ' + str(len(body)).encode() + b'\r\n\r\n' + body)
+
+
+def _publish_check(response):
+    """Raise unless nginx said it accepted the message.
+
+    The old code read the reply into a buffer and discarded it, so a refusal
+    was indistinguishable from an acceptance and nothing upstream could report
+    a dead channel. An unparseable or empty reply is a failure too: not seeing
+    an acceptance is not the same as getting one.
+    """
+    line = response.split(b'\r\n', 1)[0].decode('latin-1', 'replace')
+    parts = line.split()
+    if len(parts) < 2 or not parts[1].isdigit():
+        raise OSError('nchan publish: unreadable reply %r' % line[:80])
+    status = int(parts[1])
+    if not 200 <= status < 300:
+        body = response.partition(b'\r\n\r\n')[2].decode('latin-1', 'replace').strip()
+        raise OSError('nchan publish refused: %s (%s)' % (line, body[:80]))
+
+
 def _publish_over(sock_path):
     """Return a publish_fn that POSTs a delta to the nchan publisher socket."""
     def publish(message):
-        body = json.dumps(message, separators=(',', ':')).encode('utf-8')
-        request = (b'POST /pub/' + NCHAN_CHANNEL.encode() + b' HTTP/1.0\r\n'
-                   b'Content-Type: application/json\r\n'
-                   b'Content-Length: ' + str(len(body)).encode() + b'\r\n\r\n' + body)
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         sock.settimeout(2.0)
         try:
             sock.connect(sock_path)
-            sock.sendall(request)
-            sock.recv(256)
+            sock.sendall(_publish_request(message))
+            _publish_check(sock.recv(512))
         finally:
             sock.close()
     return publish

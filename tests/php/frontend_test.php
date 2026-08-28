@@ -28,6 +28,19 @@ function vue_code_only(string $src): string {
     return $src;
 }
 
+/* Cuts a .vue file's template out of it: from the first <template> to the LAST
+   </template>. Not a regex ending at the first close - a view that wraps a
+   block in <template v-if=...> closes one INSIDE its own template, so the
+   first-close version silently truncated the slice at that point and every
+   check reading the rest of the template passed vacuously. Two of task 14's
+   did, against a view that satisfied them. */
+function vue_template(string $code): string {
+    $open = strpos($code, '<template>');
+    $close = strrpos($code, '</template>');
+    if ($open === false || $close === false || $close <= $open) return '';
+    return substr($code, $open + 10, $close - $open - 10);
+}
+
 /* A manifest in a temp tree, so this test never depends on a build having run. */
 $tmp = sys_get_temp_dir() . '/um_ui_' . getmypid();
 @mkdir($tmp . '/.vite', 0700, true);
@@ -122,7 +135,7 @@ check('there is a three-minute stale threshold', str_contains($live, '180000'));
    LABELS object literal) even after it is deleted from <template> - the
    thing that actually renders. Isolate the template before asserting on
    what it renders. */
-$chipTemplate = (string) preg_replace('/^[\s\S]*?<template>|<\/template>[\s\S]*$/', '', $chip);
+$chipTemplate = vue_template($chip);
 check('the chip template renders both the glyph and the word, not colour alone',
       str_contains($chipTemplate, ')[0]') && str_contains($chipTemplate, ')[1]'));
 check('the chip pairs colour with a glyph', (bool) preg_match('/[\x{2713}\x{26A0}?]/u', $chip));
@@ -281,8 +294,8 @@ $drawer   = (string) @file_get_contents($src . '/components/NodeDrawer.vue');
 $overviewCode = vue_code_only($overview);
 $cardCode     = vue_code_only($card);
 $drawerCode   = vue_code_only($drawer);
-$overviewTemplate = (string) preg_replace('/^[\s\S]*?<template>|<\/template>[\s\S]*$/', '', $overviewCode);
-$cardTemplate     = (string) preg_replace('/^[\s\S]*?<template>|<\/template>[\s\S]*$/', '', $cardCode);
+$overviewTemplate = vue_template($overviewCode);
+$cardTemplate     = vue_template($cardCode);
 
 check('overview reads the health endpoint', str_contains($overviewCode, "'health'"));
 check('overview shows a fleet summary line', str_contains($overviewCode, 'fleet'));
@@ -378,6 +391,99 @@ check('the card activates on Space as well as Enter (role="button" requires both
       str_contains($cardCode, "@keydown.space"));
 check('"last seen never" gets the same um-unknown treatment fleet.js gave it',
       (bool) preg_match('/:class="\{[^}]*um-unknown[^}]*!\s*node\.last_seen[^}]*\}"[^>]*>\s*last seen/', $cardTemplate));
+
+/* == disks (task 14) =====================================================
+   Every RENDERED fact this screen carries - the orphan row, 0-vs-unknown
+   errors, and the two stale wordings - is asserted against real output in
+   tests/js/views.mjs. The checks here pin only what source text can honestly
+   pin: that the wiring exists and that the fields named are the ones the
+   endpoint actually emits. */
+$disks = vue_code_only((string) @file_get_contents($src . '/views/Disks.vue'));
+$disksTemplate = vue_template($disks);
+
+check('the disks view reads its endpoint', str_contains($disks, "'disks'"));
+check('the table is sortable', str_contains($disks, 'sortBy'));
+check('rows filter by node', str_contains($disks, 'nodeFilter'));
+check('rows filter by smart status', str_contains($disks, 'smartFilter'));
+check('smart status is shown verbatim', str_contains($disks, 'smart_status'));
+/* Tier 0 gives OK|UNKNOWN and nothing else. Deriving a health verdict from
+   two values would be inventing the one number this screen cannot know. */
+check('no verdict is invented from OK|UNKNOWN', !str_contains($disks, 'verdict'));
+check('a node whose disk payload is not current is labelled', str_contains($disks, 'stale'));
+check('spares are listed', str_contains($disks, 'spares'));
+check('the tier 0 smart limit is stated to the operator', str_contains($disks, 'Tier 1'));
+check('the disks view subscribes to live updates via useLive(refresh)',
+      str_contains($disks, 'useLive(refresh)'));
+
+/* Controller amendment A: the endpoint emits `model`; `name` is what joined 0
+   of 72 disks on Raven. A view reading disk.name renders an empty column
+   against real hardware and a full one against any fixture that invents the
+   field, which is exactly how the first cut passed. */
+check('disk rows read the model field the endpoint emits', str_contains($disks, 'disk.model'));
+check('no row reads a `name` field disks.php never emits',
+      !preg_match('/\b(disk|spare)\.name\b/', $disks));
+/* device is unique per node and present on every row including the orphans;
+   model repeats across identical drives and is null on exactly those rows. */
+/* Anchored on disk., not on node_id/device alone: the spares table's own
+   :key satisfied the loose version, so keying the disk rows on the model -
+   which repeats across identical drives and is null on every orphan - passed
+   (mutation M7). */
+check('disk rows key on the node and the device, not on the repeating model',
+      (bool) preg_match('/:key="disk\.node_id[^"]*disk\.device"/', $disksTemplate));
+
+/* Controller amendment B: an array slot with no physical disk behind it is a
+   drive that fell off the bus - the single most important row this screen can
+   show. Detected by model === null; the WORD it renders is pinned in
+   views.mjs, which is the only place that can see rendered output. */
+check('a slot with no disk behind it is detected by model === null',
+      (bool) preg_match('/model\s*===\s*null/', $disks));
+
+/* Controller amendment C: a freshly enrolled fleet lists EVERY node as stale
+   until its first slow poll lands, up to ten minutes. That wording must not
+   read as an error, so the two cases cannot share one sentence - they are
+   told apart by fetched_at, which is null only for the never-polled case. */
+check('the never-polled and failed-poll stale cases are told apart by fetched_at',
+      (bool) preg_match('/v-if="entry\.fetched_at"/', $disksTemplate)
+      && str_contains($disksTemplate, 'v-else'));
+
+/* Task 13, items 6 and 7, applied to this screen: a pane that renders nothing
+   while managerd is down, and an empty state that contradicts the shell's
+   "database could not be read" banner, were both real defects there. */
+check('the disks view never renders a blank pane', str_contains($disksTemplate, '!data'));
+check('the disks empty state is suppressed when the database is unreadable',
+      str_contains($disksTemplate, 'dbUnreadable'));
+check('the disks view reads dbUnreadable off the same memoised useEndpoint call',
+      (bool) preg_match('/const\s*\{[^}]*dbUnreadable[^}]*\}\s*=\s*useEndpoint\(\s*.disks.\s*\)/', $disks));
+/* The page-wide "these numbers are old" banner belongs to App.vue (Task 12
+   amendment C) - this view's per-node stale list is a different statement and
+   must not grow a second copy of the shell's. */
+check('the disks view does not render a second page-wide stale banner',
+      !str_contains($disks, 'um-stale-banner'));
+
+/* == drift (task 15) ===================================================== */
+$drift = vue_code_only((string) @file_get_contents($src . '/views/Drift.vue'));
+$driftTemplate = vue_template($drift);
+
+check('the drift view reads its endpoint', str_contains($drift, "'drift'"));
+check('identical rows collapse by default', str_contains($drift, 'divergent'));
+check('the collapse is reversible', str_contains($drift, 'showAll'));
+check('absence reads as a word, not a blank', str_contains($drift, 'absent'));
+check('the tier 0 plugin-version limit is stated',
+      str_contains($drift, 'plugin_versions_available'));
+check('the drift view subscribes to live updates via useLive(refresh)',
+      str_contains($drift, 'useLive(refresh)'));
+/* drift.php distinguishes never-polled (null) from polled-and-absent (false)
+   deliberately; a falsy test here would collapse the two back together and
+   report a node we have never heard from as one that lacks the plugin. */
+check('never-reported is tested against null, not merely falsy',
+      (bool) preg_match('/===\s*null/', $drift));
+check('the drift view never renders a blank pane', str_contains($driftTemplate, '!data'));
+check('the "nothing differs" line is suppressed when the database is unreadable',
+      str_contains($driftTemplate, 'dbUnreadable'));
+check('the drift view reads dbUnreadable off the same memoised useEndpoint call',
+      (bool) preg_match('/const\s*\{[^}]*dbUnreadable[^}]*\}\s*=\s*useEndpoint\(\s*.drift.\s*\)/', $drift));
+check('the drift view does not render a second page-wide stale banner',
+      !str_contains($drift, 'um-stale-banner'));
 
 echo $fails === 0 ? "frontend: all pass\n" : "frontend: $fails FAILED\n";
 exit($fails === 0 ? 0 : 1);

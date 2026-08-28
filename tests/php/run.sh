@@ -25,42 +25,30 @@ for t in tests/php/*_test.php; do
     fi
 done
 
-# Zero-dependency proof of live.js's singleton/mount-fetch behaviour - not
-# expressible as a PHP source-text check. Guarded the way build.sh guards
-# npm: skipped where node is absent, mandatory in CI (ubuntu-latest ships
-# node, which the "Lint JS" step above already relies on).
+# Zero-dependency proofs of behaviour no PHP source-text check can see:
+#   live_singleton.mjs - live.js's singleton/refcount/mount-fetch behaviour
+#   node_card.mjs      - NodeCard.vue's rendered output (null-vs-zero,
+#                        empty-array-vs-0%, unknown-vs-failed)
+#   views.mjs          - Disks.vue and Drift.vue's rendered output (an array
+#                        slot with no disk behind it, 0-vs-unknown errors,
+#                        never-polled vs failed-poll, absent vs unreported)
+# Guarded the way build.sh guards npm: skipped where node is absent, mandatory
+# in CI (ubuntu-latest ships node, which the "Lint JS" step above relies on).
 if command -v node >/dev/null; then
-    echo "--- tests/js/live_singleton.mjs"
-    out=$(node tests/js/live_singleton.mjs 2>&1)
-    code=$?
-    echo "$out"
-    if [ "$code" -ne 0 ]; then
-        fails=$((fails + 1))
-    elif ! grep -q ': all pass$' <<< "$out"; then
-        echo "!!! tests/js/live_singleton.mjs exited 0 without ever printing 'all pass' - treating as FAILED"
-        fails=$((fails + 1))
-    fi
+    for t in tests/js/live_singleton.mjs tests/js/node_card.mjs tests/js/views.mjs; do
+        echo "--- $t"
+        out=$(node "$t" 2>&1)
+        code=$?
+        echo "$out"
+        if [ "$code" -ne 0 ]; then
+            fails=$((fails + 1))
+        elif ! grep -q ': all pass$' <<< "$out"; then
+            echo "!!! $t exited 0 without ever printing 'all pass' - treating as FAILED"
+            fails=$((fails + 1))
+        fi
+    done
 else
-    echo "!!! node not on PATH - skipping tests/js/live_singleton.mjs (mandatory in CI)"
-fi
-
-# Zero-dependency proof of NodeCard.vue's actual rendered output (null-vs-zero
-# unread, empty-array-vs-0%, unknown-indicator-vs-head-chip) via a real SSR
-# compile+render, not a source-text check - see tests/js/node_card.mjs. Same
-# guard shape as tests/js/live_singleton.mjs above.
-if command -v node >/dev/null; then
-    echo "--- tests/js/node_card.mjs"
-    out=$(node tests/js/node_card.mjs 2>&1)
-    code=$?
-    echo "$out"
-    if [ "$code" -ne 0 ]; then
-        fails=$((fails + 1))
-    elif ! grep -q ': all pass$' <<< "$out"; then
-        echo "!!! tests/js/node_card.mjs exited 0 without ever printing 'all pass' - treating as FAILED"
-        fails=$((fails + 1))
-    fi
-else
-    echo "!!! node not on PATH - skipping tests/js/node_card.mjs (mandatory in CI)"
+    echo "!!! node not on PATH - skipping tests/js/*.mjs (mandatory in CI)"
 fi
 
 if [ "$fails" -ne 0 ]; then

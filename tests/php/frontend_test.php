@@ -251,5 +251,54 @@ foreach ($vueFiles as $f) {
 }
 check('no .vue file hardcodes a background colour (tokens.css owns those)', !$hardcodedBg);
 
+/* ── overview ─────────────────────────────────────────────────────────────── */
+$overview = (string) @file_get_contents($src . '/views/Overview.vue');
+$card     = (string) @file_get_contents($src . '/components/NodeCard.vue');
+$drawer   = (string) @file_get_contents($src . '/components/NodeDrawer.vue');
+
+check('overview reads the health endpoint', str_contains($overview, "'health'"));
+check('overview shows a fleet summary line', str_contains($overview, 'fleet'));
+check('overview handles having no nodes at all', str_contains($overview, 'No nodes'));
+/* Task 12 moved the stale banner to App.vue so it covers every tab (Controller
+   amendment C). Overview.vue must NOT grow a second one - frontend_test.php
+   already pins this from the App.vue side ('the stale banner did not stay
+   behind in Overview.vue'); this is the same invariant asserted here too. */
+check('overview does not render its own stale banner (Task 12 amendment C owns it in App.vue)',
+      !str_contains($overview, 'stale'));
+
+check('the card shows capacity as a bar', str_contains($card, 'um-capbar'));
+check('an empty array is labelled, not shown as 0%', str_contains($card, 'empty array'));
+check('the card lists the indicators', str_contains($card, 'indicators'));
+check('the card shows how long the state has held', str_contains($card, 'since'));
+
+check('the drawer closes on escape', str_contains($drawer, 'Escape'));
+check('the drawer shows per-domain detail', str_contains($drawer, 'domains'));
+check('the drawer never asks for a key',
+      !preg_match('/\bkey\s*:/', $drawer) && !preg_match('/[?&]key=/', $drawer));
+
+/* ── amendment A: unread notification counts, null distinct from zero ────────
+   The P0 Fleet tab carried an alert/warning/info column. `null` means "we have
+   not heard" and must not look like a confirmed zero. A single unguarded
+   template expression (`node.unread?.alert || 0`) would print "0 alert · 0
+   warn · 0 info" for both cases - collapsing exactly the distinction the
+   amendment exists to preserve. Assert there are two genuinely different
+   render paths, not one path with a fallback. */
+$cardTemplate = (string) preg_replace('/^[\s\S]*?<template>|<\/template>[\s\S]*$/', '', $card);
+check('the card renders the unread alert/warning/info breakdown when the payload is present',
+      (bool) preg_match('/unread[\s\S]{0,40}\.alert/', $card)
+      && (bool) preg_match('/unread[\s\S]{0,40}\.warning/', $card)
+      && (bool) preg_match('/unread[\s\S]{0,40}\.info/', $card));
+check('the card has a distinct "we have not heard" branch for unread === null, styled unknown',
+      (bool) preg_match('/v-if="node\.unread"[\s\S]{0,300}v-else[\s\S]{0,120}um-unknown/', $cardTemplate));
+/* The two branches must actually be siblings gated on the same node.unread
+   check, not two independent v-ifs that could both fire (which would let a
+   null case fall through the "present" branch first and still print zeros). */
+check('the present/unknown unread branches are if/else on node.unread, not two independent v-ifs',
+      (bool) preg_match('/v-if="node\.unread"[\s\S]{0,300}v-else(?!-if)/', $cardTemplate));
+
+/* ── amendment B: the Unraid API version travels alongside the OS version ──── */
+check('the card shows the Unraid API version, not only the OS version',
+      (bool) preg_match('/node\.unraid[\s\S]{0,80}node\.api\b/', $cardTemplate));
+
 echo $fails === 0 ? "frontend: all pass\n" : "frontend: $fails FAILED\n";
 exit($fails === 0 ? 0 : 1);

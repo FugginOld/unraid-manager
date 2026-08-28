@@ -1,20 +1,27 @@
 # P1 exit — the pane on Raven and Golem
 
 Operator-assisted trial, 2026-08-28, Raven (manager) + Golem (peer).
-Head at start `ab77584`, release `2026.08.28`. Three P1 defects and three doc
-defects were fixed during and immediately after the trial; head at end
-`eaaf613`.
+Head at start `ab77584`, release `2026.08.28`. Four P1 defects, one operator
+finding and three doc defects were fixed during the trial; head at end
+`9c619f8`.
 
 ## Verdict
 
-**Not yet — pending one live re-check.** The pane does replace opening two
-browser tabs for everything it shows: one screen carries both boxes' health,
-disks and drift, it follows the theme, and it now updates live. What it could
-not do during the trial was tell you when to stop believing it — with
-`managerd` stopped it went on displaying its last numbers with no warning of
-any kind, indefinitely (**F-1**). That is fixed and tested but has not yet been
-re-verified on hardware; the phase closes when steps 8b-8d pass on Raven and
-step 7 (hysteresis) has been run at all.
+**Yes, with one open defect worth fixing first.** Every step of the trial
+passes on hardware. One screen carries both boxes' health, disks and drift; it
+follows the theme; it updates live within a second of a poll; it says so, in
+the operator's own clock, when the data stops moving; and hysteresis behaves
+exactly as specified — two cycles to escalate, five to clear.
+
+The one thing I would fix before calling the phase done is **F-4**: a box whose
+disks are all unassigned has no thermal monitoring at all, while the pane
+displays eleven temperatures for it one tab over. That is a monitoring blind
+spot on a real member of this fleet, not a cosmetic issue. It is a contained
+change in the health engine and does not touch the pane.
+
+Three of the four P1 defects found here had survived two phases with a green
+test suite. Every one of them was invisible to the suite for the same reason:
+nothing asserted on what the operator actually sees or receives.
 
 ## Per step
 
@@ -27,10 +34,11 @@ step 7 (hysteresis) has been run at all.
 | 5 | Disks | pass |
 | 5a | Null-model rows | **0 of 49 disks** — the orphan inference is not exercised here |
 | 6 | Drift | pass (static); the live plugin-change check was not run |
-| 7 | Hysteresis | **not run** |
+| — | Timestamps | **pass** — local zone and Unraid's own 12-hour clock, after two fixes |
+| 7 | Hysteresis | **pass** — held through the first cycle, flipped on the second, five cycles to clear |
 | 8a | Live updates | **fail, then fixed** — see F-2 and F-3; now working |
-| 8b | Stale banner | **fail — F-1, fixed `a485caf`, needs re-check** |
-| 8c/8d | Banner across tabs, banner clears | **not yet run** — blocked by F-1 during the trial |
+| 8b | Stale banner | **fail, then fixed** — F-1; re-verified on hardware |
+| 8c/8d | Banner across tabs, banner clears | **pass** — visible on all three tabs, cleared itself on restart |
 | 9 | Themes | pass — white, black, azure, gray |
 | 10 | Bundle | pass — 31,206 bytes gzipped against a 256,000 budget |
 
@@ -71,12 +79,15 @@ no blank cells and no `—`, so both nodes had reported their plugin lists.
 
 | # | What | Severity | State |
 |---|------|----------|-------|
-| F-1 | The stale banner cannot fire while php-fpm is up | **P1** | fixed `a485caf`, awaiting live re-check |
+| F-1 | The stale banner cannot fire while php-fpm is up | **P1** | fixed `a485caf`, **verified on hardware** |
 | F-2 | Every nchan publish was refused `403` | P1 | fixed, `5b10e55` |
 | F-3 | Nudges fired only on a status flip, so never on a healthy fleet | P1 | fixed, `5296e86` |
 | F-4 | Thermal is blind on a box whose disks are unassigned | P1 or P2 | **open, awaiting ruling** |
 | F-5 | Every spare is listed twice | P2 | **open** |
 | F-6 | Card says `OK disk errors` while the table shows 192 | P2 | **open, awaiting ruling** |
+| F-7 | The Disks tab hardcodes Celsius; Unraid has a unit setting | P2 | **open** |
+| F-8 | Our temp thresholds ignore the `hot`/`max` the operator already set | P2 | **open** |
+| F-9 | The stale label dumped nginx's 504 HTML page into the sentence | P2 | fixed, `9c619f8` |
 | D-1 | `plugin remove` deletes the `.plg`, so the documented order loses it | doc | fixed `HOWTO.md` + both runbooks |
 | D-2 | The runbook's `rc` path (`/etc/rc.d/…`) does not exist | doc | fixed in the runbook |
 | D-3 | Building on the box silently depends on node/npm being present | doc | documented in `HOWTO.md` |
@@ -180,14 +191,44 @@ All three were mine, and all three cost time at the keyboard:
   diagnosis of the failed install blamed exactly this and was wrong — the build
   had succeeded; D-1 was the cause.)
 
+### F-7, F-8 — two settings Unraid already has and we ignore (P2, open)
+
+`dynamix.cfg`'s `[display]` section, read while fixing the clock, carries two
+more things the operator has already decided:
+
+- `unit="C"` — a temperature unit. The Disks tab hardcodes Celsius. Raven is on
+  C so nothing is visibly wrong, but a box set to Fahrenheit would be read
+  wrong by a wide margin.
+- `hot="45"`, `max="55"` — Unraid's own disk temperature thresholds. Our health
+  engine ships unrelated defaults (`temp_warn` 50, `temp_crit` 60), so there
+  are two answers on one box to "how hot is too hot". Worth considering whether
+  our defaults should seed from those rather than from a constant.
+
+### F-9 — nginx's 504 page rendered into a sentence (P2, fixed `9c619f8`)
+
+Observed live, with both nodes' `disks` polls timing out at once:
+
+> Golem: showing the disk list collected 2026-08-28, 5:52:49 PM EDT — the
+> latest poll did not complete (HTTP 504 Gateway Time-out from nginx - the
+> query took longer than the server allows (`<html> <head><title>504 Gateway
+> Time-out</title></head> <body> <center><h1>504 Gateway Time-out</h1>
+> </center> <hr><cente`)).
+
+`parse_response` appended 120 characters of the response body to a message that
+already said what happened; for a recognised 504 that body is boilerplate, and
+it got cut off mid-tag. The snippet stays on the unrecognised non-JSON branch,
+where it is the only clue about what a peer sent.
+
+Worth recording what else that screenshot proved: both nodes' slow lane 504'd
+at the same moment, and the screen said so plainly — naming each node, the age
+of what it was showing, and in the operator's own clock. That is what
+amendment C was written for, working against a real failure rather than a
+staged one.
+
 ## Not covered
 
-- **Step 7, hysteresis** — not run. `temp_warn` was never lowered, so the
-  two-cycle escalation and five-cycle clear remain unverified on hardware.
 - **Step 6's live plugin change** — the matrix was read, but no plugin was
   installed or removed to watch a row appear and be flagged divergent.
-- **Steps 8c and 8d** — blocked by F-1; with no banner there is nothing to
-  follow across tabs or to watch clear.
 - **The orphan row** — 0 of 49 disks have a null model, so the "no disk present"
   rendering was never exercised against real hardware. It is proven only in
   `tests/js/views.mjs`.

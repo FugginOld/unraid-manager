@@ -104,11 +104,17 @@ check('live updates use EventSource', str_contains($live, 'EventSource'));
 check('there is a polling fallback', str_contains($live, '30000'));
 check('there is a three-minute stale threshold', str_contains($live, '180000'));
 
-check('the chip pairs colour with a word',
-      str_contains($chip, 'OK') && str_contains($chip, 'Degraded')
-      && str_contains($chip, 'Unknown'));
+/* Whole-file substring checks pass on a word surviving in <script> (the
+   LABELS object literal) even after it is deleted from <template> - the
+   thing that actually renders. Isolate the template before asserting on
+   what it renders. */
+$chipTemplate = (string) preg_replace('/^[\s\S]*?<template>|<\/template>[\s\S]*$/', '', $chip);
+check('the chip template renders both the glyph and the word, not colour alone',
+      str_contains($chipTemplate, ')[0]') && str_contains($chipTemplate, ')[1]'));
 check('the chip pairs colour with a glyph', (bool) preg_match('/[\x{2713}\x{26A0}?]/u', $chip));
 check('unknown has its own treatment', str_contains($chip, 'um-unknown'));
+check('the chip class binding is driven by the state prop, not a static string',
+      (bool) preg_match('/:class\s*=\s*"[^"]*\bstate\b[^"]*"/', $chipTemplate));
 
 check('the shell has all three tabs',
       str_contains($app, 'Overview') && str_contains($app, 'Disks')
@@ -121,20 +127,48 @@ check('no router library was added',
    shell distinguishes them. Handled once in useEndpoint/App.vue, not per view. */
 check('the api client reads the db property off a response',
       (bool) preg_match('/\bdb\s*===?\s*false\b|\.db\b/', $api));
-check('the api client exposes dbUnreadable distinct from error/loading',
+check('the api client exposes error and loading alongside dbUnreadable',
       str_contains($api, 'dbUnreadable') && str_contains($api, 'error')
       && str_contains($api, 'loading'));
-check('App.vue references the dbUnreadable flag', str_contains($app, 'dbUnreadable'));
+/* Deleting dbUnreadable from useEndpoint's RETURNED object leaves the banner
+   permanently hidden, yet the identifier still survives in its `ref()`
+   declaration and the doc comment above it - a whole-file substring check
+   cannot tell the two apart. Anchor on the return statement itself. */
+check('the api client actually returns dbUnreadable from useEndpoint, not just declares it',
+      (bool) preg_match('/return\s*\{[^}]*\bdbUnreadable\b[^}]*\}/', $api));
+check('App.vue destructures dbUnreadable out of useEndpoint(), not just mentions it',
+      (bool) preg_match('/\{[^}]*\bdbUnreadable\b[^}]*\}\s*=\s*useEndpoint/', $app));
 check('App.vue renders a persistent database-unreadable banner',
       str_contains($app, 'could not be read'));
-check('the db-unreadable banner is not wrapped in anything dismissible',
-      !preg_match('/dismiss|@click="[^"]*(close|hide|dismiss)/i', $app));
 check('the db-unreadable banner points at the settings page',
       str_contains($app, 'UnraidManagerSettings'));
 
+/* A keyword blacklist for "dismissible" survives `v-if="dbUnreadable && !gone"`
+   plus `@click="gone = true"` - neither word appears. Assert the actual
+   construct: the v-if condition is the bare flag, and nothing inside the
+   banner is clickable. */
+$appTemplate = (string) preg_replace('#<style>.*#s', '', $app);
+preg_match('/<p\s+v-if="dbUnreadable"[^>]*>.*?<\/p>/s', $appTemplate, $dbBannerMatch);
+$dbBannerBlock = $dbBannerMatch[0] ?? '';
+check('the db-unreadable banner condition is the bare flag, not a dismissible compound',
+      $dbBannerBlock !== '' && !str_contains($dbBannerBlock, '@click'));
+check('the db-unreadable banner is rendered by the shell, above the tabs, not by a view',
+      preg_match('#um-db-banner.*?<nav\b#s', $appTemplate) === 1);
+
 /* ── amendment 2A: useLive must tear down / be a singleton ───────────────── */
-check('useLive registers per-caller teardown or is a module singleton',
-      str_contains($live, 'onUnmounted') || str_contains($live, 'started'));
+/* `str_contains($live, 'started')` survives deleting `if (started) return` -
+   the exact defect - because `started = true` is still on the next line. A
+   substring of an identifier is not an assertion about a construct. */
+check('useLive registers per-caller teardown via onUnmounted',
+      (bool) preg_match('/onUnmounted\s*\(/', $live));
+check('start() guards against re-creating the singleton stream and timers',
+      (bool) preg_match('/if\s*\(\s*started\s*\)\s*return/', $live));
+preg_match('/export function useLive[\s\S]*?\n\}/', $live, $useLiveMatch);
+$useLiveBody = $useLiveMatch[0] ?? '';
+$addPos = strpos($useLiveBody, 'callbacks.add(');
+$kickPos = strpos($useLiveBody, 'kick(refresh)');
+check('a newly registered caller is kicked immediately, not left for the fallback timer',
+      $addPos !== false && $kickPos !== false && $addPos < $kickPos);
 
 /* ── amendment 2B: the stale banner is page-wide ──────────────────────────── */
 check('App.vue imports the live-updates module', str_contains($app, "live.js"));
@@ -142,9 +176,12 @@ check('App.vue imports the live-updates module', str_contains($app, "live.js"));
    in this file's <style> block — matching the selector would let the banner
    move anywhere in the template (even after <component :is>) and still pass,
    since the CSS always comes last. */
-$appTemplate = (string) preg_replace('#<style>.*#s', '', $app);
 check('the stale banner is rendered by the shell, above the tabs, not by a view',
       preg_match('#um-stale-banner.*?<nav\b#s', $appTemplate) === 1);
+check('the stale banner names when the manager last answered',
+      str_contains($app, 'lastGood'));
+check('the two banners are independent, not v-else-if siblings',
+      !preg_match('/v-else-if\s*=\s*"stale"/', $app));
 $overviewStub = (string) @file_get_contents($src . '/views/Overview.vue');
 check('the stale banner did not stay behind in Overview.vue',
       !str_contains($overviewStub, 'stale'));
@@ -152,8 +189,36 @@ check('the stale banner did not stay behind in Overview.vue',
 /* ── amendment 2C: a malformed 200 is not a fresh refresh ─────────────────── */
 check('the api client imports its own get() rather than duplicating fetch',
       substr_count($api, 'fetch(') === 1);
-check('useEndpoint guards on an expected top-level key before accepting a refresh',
-      str_contains($api, 'health') && str_contains($api, 'disks') && str_contains($api, 'rows'));
+check('the expected-key map covers health -> nodes',
+      (bool) preg_match('/health\s*:\s*[\'"]nodes[\'"]/', $api));
+check('the expected-key map covers disks -> disks',
+      (bool) preg_match('/disks\s*:\s*[\'"]disks[\'"]/', $api));
+check('the expected-key map covers drift -> rows',
+      (bool) preg_match('/drift\s*:\s*[\'"]rows[\'"]/', $api));
+check('useEndpoint throws on a name with no expected key registered (fails closed)',
+      (bool) preg_match('/if\s*\(\s*!\s*expectKey\s*\)\s*throw/', $api));
+check('useEndpoint throws when the response lacks its expected top-level key',
+      (bool) preg_match('/!\(\s*expectKey\s+in\s+json\s*\)[\s\S]{0,60}throw/', $api));
+check('useEndpoint is memoised per name (no duplicate refresh closures)',
+      str_contains($api, 'CACHE') && str_contains($api, '.has(name)'));
+
+/* ── binding constraints that were unpinned ───────────────────────────────── */
+/* tokens.css's own header: "A hardcoded background anywhere in this bundle is
+   a bug" - it is meant to read Unraid's own custom property, always. Check
+   every .vue file, not just App.vue, so a future component cannot slip one in
+   either. */
+$vueFiles = array_merge(
+    [$src . '/App.vue', $src . '/components/StatusChip.vue'],
+    glob($src . '/views/*.vue') ?: []
+);
+$hardcodedBg = false;
+foreach ($vueFiles as $f) {
+    if (preg_match('/background(-color)?\s*:\s*#[0-9a-fA-F]{3,8}\b/', (string) file_get_contents($f))) {
+        $hardcodedBg = true;
+        break;
+    }
+}
+check('no .vue file hardcodes a background colour (tokens.css owns those)', !$hardcodedBg);
 
 echo $fails === 0 ? "frontend: all pass\n" : "frontend: $fails FAILED\n";
 exit($fails === 0 ? 0 : 1);

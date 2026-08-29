@@ -3,6 +3,7 @@ import { ref, computed } from 'vue'
 import { useEndpoint } from '../api.js'
 import { useLive } from '../live.js'
 import { localTime } from '../time.js'
+import { sortRows } from '../sort.js'
 
 // Same memoised object App.vue and Overview.vue read (api.js): reading
 // error/dbUnreadable here is a second READ of a shared endpoint, not a second
@@ -55,13 +56,11 @@ const rows = computed(() => {
   const all = (data.value?.disks ?? [])
     .filter(d => !nodeFilter.value || d.node === nodeFilter.value)
     .filter(d => !smartFilter.value || smartOf(d) === smartFilter.value)
-  const key = sortKey.value
-  return [...all].sort((a, b) => {
-    const x = a[key] ?? ''
-    const y = b[key] ?? ''
-    if (x === y) return 0
-    return (x < y ? -1 : 1) * (sortAsc.value ? 1 : -1)
-  })
+  // sort.js, not an inline comparator: a disk with no temperature used to
+  // sort as if it were 0 C and lead an ascending sort, reading as the coldest
+  // drive in the fleet (P1 triage P2-7). SSR cannot click a header, so the
+  // rule is pinned where it can be - as a function.
+  return sortRows(all, sortKey.value, sortAsc.value)
 })
 
 const nodes = computed(() => [...new Set((data.value?.disks ?? []).map(d => d.node))])

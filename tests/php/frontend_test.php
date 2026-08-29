@@ -508,5 +508,14 @@ check('the drawer renders its per-domain timestamp through the shared formatter'
 check('the drawer takes the zone and the clock from the shell, not from itself',
       str_contains($drawerCode2, "inject('um-tz'") && str_contains($drawerCode2, "inject('um-clock12'"));
 
+/* P1 triage P2-7: the comparison lives in sort.js so it can be tested at all -
+   SSR cannot click a column header. Pinned here so it cannot quietly move back
+   inline, where the only possible coverage was a grep for the word sortBy. */
+$sortSrc = (string) @file_get_contents($src . '/sort.js');
+check('the sort comparison is a module, not an inline closure',
+      str_contains($sortSrc, 'export function compareValues'));
+check('the disks view uses it rather than its own comparator',
+      str_contains($disks, 'sortRows(') && !preg_match('/\.sort\(\(a, b\)/', $disks));
+
 echo $fails === 0 ? "frontend: all pass\n" : "frontend: $fails FAILED\n";
 exit($fails === 0 ? 0 : 1);

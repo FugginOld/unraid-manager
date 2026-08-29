@@ -11,6 +11,7 @@
 // the real ones open a fetch, an EventSource and two intervals on call.
 //   node tests/js/views.mjs   ->   "views: all pass" (exit 0)
 import path from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { createCompiler, frontend, reporter } from './ssr.mjs'
 
 const viewsDir = path.join(frontend, 'src', 'views')
@@ -82,6 +83,32 @@ const ORPHAN = {
 }
 
 try {
+  /* Column sorting (P1 triage P2-7). SSR cannot click a header, so this is the
+     only level at which the rule can be pinned - which is exactly why the
+     comparison was extracted from Disks.vue into sort.js. */
+  const { compareValues, sortRows } = await import(
+    pathToFileURL(path.join(frontend, 'src', 'sort.js')).href)
+
+  const temps = [{ d: 'a', temp: 41 }, { d: 'b', temp: null },
+                 { d: 'c', temp: 12 }, { d: 'd', temp: undefined }]
+  const asc = sortRows(temps, 'temp', true).map(r => r.d)
+  const desc = sortRows(temps, 'temp', false).map(r => r.d)
+  check('a disk with no temperature does not lead an ascending sort',
+        asc[0] === 'c' && asc[1] === 'a',
+  )
+  check('a missing reading sorts last whichever way the arrow points',
+        asc.slice(2).every(d => 'bd'.includes(d))
+        && desc.slice(2).every(d => 'bd'.includes(d)))
+  check('the direction still applies to the readings that exist',
+        desc[0] === 'a' && desc[1] === 'c')
+  /* `errors` is an integer or null, `slot` is 'disk1' or null: mixed columns
+     are the normal case here, and JS relational operators on mixed types are
+     a coin toss. */
+  check('numbers compare as numbers, not as strings',
+        compareValues(9, 10, true) < 0 && compareValues('9', '10', true) > 0)
+  check('two missing values are equal, not ordered',
+        compareValues(null, undefined, true) === 0)
+
   const Disks = await ssr.load(path.join(viewsDir, 'Disks.vue'))
 
   /* ── amendment B: an orphan row is the most important row on the screen ── */
@@ -163,8 +190,14 @@ try {
   /* Vue renders {{ null }} as an empty string, so the check above only bites a
      string concatenation. This one bites the interpolation: the never-polled
      sentence must not reach for a timestamp it does not have. */
-  check('a never-polled node does not claim to be showing data collected at some time',
-        !/collected/.test(htmlNeverPolled))
+  /* Was `!/collected/`, which pinned the never-polled sentence to a word in
+     the OTHER sentence: rewording the failed-poll branch would have left this
+     permanently true and silently vacuous (P1 triage P2-9). The property is
+     that a node with no fetched_at never renders a time at all - asserted
+     against the shape of a rendered timestamp rather than against prose. */
+  check('a never-polled node renders no timestamp, because it has none',
+        !/\d{4}-\d{2}-\d{2}/.test(htmlNeverPolled)
+        && /\d{4}-\d{2}-\d{2}/.test(htmlFailedPoll))
   check('a failed poll names the real error so the operator can act on it',
         htmlFailedPoll.includes('HTTP 504 from 10.0.0.9'))
   /* Rendered as a wall clock, not as the stored UTC instant. This fixture
@@ -209,7 +242,26 @@ try {
   })
   check('the matrix is headed by node NAMES, not the opaque ids they are keyed by',
         htmlDrift.includes('Wraith') && !htmlDrift.includes('>n3<'))
-  check('a divergent row is highlighted as such', htmlDrift.includes('um-warn'))
+  /* Scoped to the divergent row and checked against a NON-divergent one in the
+     same render: `htmlDrift.includes('um-warn')` was live only while Drift.vue
+     used that class in exactly one place, and would have gone vacuous the
+     moment a second use appeared anywhere in the file (P1 triage P2-9). */
+  const driftRow = (needle) =>
+    (htmlDrift.split('<tr').find(r => r.includes(needle)) ?? '').split('</tr>')[0]
+  check('a divergent row is highlighted as such',
+        driftRow('6.12.9').includes('um-warn'))
+  /* Two divergent rows, three node columns, so six highlighted cells. This
+     kills "highlight nothing" and any change that spreads the class to the
+     item column.
+
+     Its LIMIT, stated rather than left to be discovered: it cannot kill
+     `{'um-warn': true}`. The collapse hides every non-divergent row by
+     default, so in this render "highlight the divergent cells" and "highlight
+     all cells" produce identical output. Distinguishing them needs the
+     Show-all-rows toggle, which needs a click, which needs the interaction
+     harness that P1 triage P2-8 tracks. */
+  check('exactly the divergent cells are highlighted, and only those cells',
+        (htmlDrift.match(/um-warn/g) || []).length === 6)
   check('a plugin present on a node reads "present"', htmlDrift.includes('present'))
   check('a plugin absent from a node reads "absent", not a blank cell',
         htmlDrift.includes('absent'))

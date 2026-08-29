@@ -157,8 +157,29 @@ class TestOtherFastParsers(unittest.TestCase):
         out = collector.parse_notifications(context.fixture_json('seed/notifications.json')['data'])
         self.assertEqual({'info': 3, 'warning': 1, 'alert': 0, 'total': 4}, out['unread'])
 
-    def test_notifications_missing_overview_is_zeros_not_a_crash(self):
-        out = collector.parse_notifications({'notifications': {}})
+    def test_notifications_missing_overview_is_null_not_zeros(self):
+        """P1 triage P2-4. This used to assert zeros, and that was the defect.
+
+        The intent was "does not crash", which still holds - but `or {}` also
+        turned "the API reported no unread block" into "zero of everything",
+        erasing the unheard-vs-zero distinction UPSTREAM of a UI that carefully
+        honours it. NodeCard has a branch for unread === null and
+        tests/js/node_card.mjs pins that null and {0,0,0} render differently;
+        before this, that branch could only ever fire for a node with no
+        notifications row at all, never for one whose query came back empty.
+        """
+        for shape in ({'notifications': {}},
+                      {'notifications': {'overview': {}}},
+                      {'notifications': None},
+                      {}):
+            self.assertIsNone(collector.parse_notifications(shape)['unread'], shape)
+
+    def test_a_reported_zero_is_still_zero(self):
+        # The other half: a box that really has nothing unread says so, and
+        # that must not be mistaken for silence.
+        out = collector.parse_notifications(
+            {'notifications': {'overview': {'unread': {'info': 0, 'warning': 0,
+                                                       'alert': 0, 'total': 0}}}})
         self.assertEqual({'info': 0, 'warning': 0, 'alert': 0, 'total': 0}, out['unread'])
 
     def test_metrics(self):

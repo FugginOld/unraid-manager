@@ -159,7 +159,20 @@ def parse_shares(data):
 
 
 def parse_notifications(data):
-    unread = (((data.get('notifications') or {}).get('overview') or {}).get('unread')) or {}
+    # P1 triage P2-4. `or {}` turned "the API reported no unread block" into
+    # "zero of everything", so the daemon erased the unheard-vs-zero
+    # distinction UPSTREAM of a UI that carefully honours it: NodeCard has a
+    # branch for unread === null, tests/js/node_card.mjs pins that null and
+    # {0,0,0} render differently, and health.php passes null through - all of
+    # which could only ever have fired for a node with no notifications row at
+    # all, never for one whose query came back empty.
+    #
+    # Same shape as the absent-vs-empty array one function up: the honest
+    # answer to "we were told nothing" is null, and every consumer of this
+    # payload already knew what to do with one.
+    unread = ((data.get('notifications') or {}).get('overview') or {}).get('unread')
+    if unread is None:
+        return {'unread': None}
     return {'unread': {k: _int(unread.get(k)) for k in ('info', 'warning', 'alert', 'total')}}
 
 

@@ -67,6 +67,25 @@ def parse_info(data):
 
 
 def parse_array(data):
+    # P1 triage P2-1: `data.get('array') or {}` turned an ABSENT array into an
+    # EMPTY one - capacity {0,0,0}, empty=True - so a box that told us nothing
+    # rendered "array is empty" and a healthy capacity indicator. Raven really
+    # is empty, which is what made the two indistinguishable and the bug
+    # invisible: the same absent-vs-empty family as the stale banner (F-1) and
+    # the thermal blind spot (F-4), both of which were live on real hardware.
+    #
+    # Nulls, not zeros, for everything the array would have told us. Every
+    # consumer already handles them: evaluate_capacity returns UNKNOWN for a
+    # null capacity, evaluate_array_state for a null state, NodeCard has a
+    # "capacity unknown" branch, and _samples_for skips a null rather than
+    # recording a zero that would read as a counter reset.
+    if data.get('array') is None:
+        return {'state': None, 'empty': None, 'capacity': None,
+                'slots': {'free': None, 'used': None, 'total': None},
+                'disk_count': None, 'disks': [], 'parity_count': None,
+                'errors_total': None, 'temp_max': None, 'pools': [],
+                'parity_check_status': None}
+
     array = data.get('array') or {}
     kb = ((array.get('capacity') or {}).get('kilobytes')) or {}
     slots = ((array.get('capacity') or {}).get('disks')) or {}
@@ -191,10 +210,18 @@ def parse_parity(data):
 def _samples_for(domain_name, payload):
     """Numeric series worth keeping, as (metric, value) pairs."""
     if domain_name == 'array':
+        # An array the API did not report has no numbers to keep. Recording
+        # zeros for it would be worse than recording nothing: disk_errors
+        # judges CHANGE over a window, so a zero row among real counts reads
+        # as a counter reset - the peer-rebooted case - and silently forgives
+        # every error that came before it (P1 triage P2-1).
+        if payload['capacity'] is None:
+            return []
         rows = [('array.bytes_used', payload['capacity']['used']),
-                ('array.bytes_total', payload['capacity']['total']),
-                # health.evaluate_disk_errors has no history without this.
-                ('array.errors_total', payload['errors_total'])]
+                ('array.bytes_total', payload['capacity']['total'])]
+        # health.evaluate_disk_errors has no history without this.
+        if payload['errors_total'] is not None:
+            rows.append(('array.errors_total', payload['errors_total']))
         if payload['temp_max'] is not None:
             rows.append(('array.temp_max', payload['temp_max']))
         for pool in payload['pools']:

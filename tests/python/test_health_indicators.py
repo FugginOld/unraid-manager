@@ -86,6 +86,18 @@ class TestCapacity(unittest.TestCase):
         self.assertEqual(health.OK, health.evaluate_capacity(
             {'capacity': {'used': 0, 'total': 0}}, health.DEFAULT_THRESHOLDS).state)
 
+    def test_an_array_the_api_did_not_report_is_unknown_not_empty(self):
+        # P1 triage P2-1, end to end: the parse now yields capacity None for an
+        # absent array, and this indicator has always answered UNKNOWN to that.
+        # Before the parse fix it received {0,0,0} and said "array is empty" -
+        # a healthy verdict about a box it could not see.
+        absent = collector.parse_array({'array': None})
+        out = health.evaluate_capacity(absent, health.DEFAULT_THRESHOLDS)
+        self.assertEqual(health.UNKNOWN, out.state)
+        self.assertNotIn('empty', out.basis)
+        # And the state indicator agrees rather than contradicting it.
+        self.assertEqual(health.UNKNOWN, health.evaluate_array_state(absent).state)
+
 
 class TestThermal(unittest.TestCase):
     T = health.DEFAULT_THRESHOLDS

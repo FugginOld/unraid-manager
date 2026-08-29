@@ -218,6 +218,43 @@ class TestCollect(unittest.TestCase):
         self.assertEqual(collector.parse_array(data)['errors_total'],
                          metrics['array.errors_total'])
 
+    def test_an_absent_array_is_not_an_empty_one(self):
+        """P1 triage P2-1.
+
+        `data.get('array') or {}` turned a null array into an empty one:
+        capacity {0,0,0}, empty=True, so a box that told us NOTHING rendered
+        "array is empty" with a healthy capacity indicator. Raven really is
+        empty, which is what made the two states indistinguishable on the one
+        box that could have shown the difference.
+
+        Same family as the stale banner (F-1) and the thermal blind spot
+        (F-4), and both of those were live on real hardware rather than
+        theoretical.
+        """
+        absent = collector.parse_array({'array': None})
+        empty = collector.parse_array(
+            context.fixture_json('seed/array_empty.json')['data'])
+
+        self.assertIsNone(absent['capacity'], 'no capacity was reported at all')
+        self.assertIsNone(absent['empty'], 'we do not know whether it is empty')
+        self.assertIsNone(absent['state'])
+        self.assertIsNone(absent['errors_total'], 'zero errors is a claim we cannot make')
+
+        # ...while a genuinely empty array still reports real zeros and says so.
+        self.assertEqual({'free': 0, 'used': 0, 'total': 0}, empty['capacity'])
+        self.assertIs(True, empty['empty'])
+
+    def test_an_absent_array_records_no_samples(self):
+        # disk_errors judges CHANGE over a window, so a zero row among real
+        # counts reads as a counter reset - the peer-rebooted case - and
+        # silently forgives every error before it.
+        self.assertEqual([], collector._samples_for(
+            'array', collector.parse_array({'array': None})))
+        self.assertTrue(collector._samples_for(
+            'array', collector.parse_array(
+                context.fixture_json('seed/array_empty.json')['data'])),
+            'a real empty array still has numbers worth keeping')
+
     def test_empty_array_collects_ok(self):
         data = context.fixture_json('seed/array_empty.json')['data']
         result = collector.collect(lambda *a, **k: data, self.NODE, collector.DOMAINS['array'])

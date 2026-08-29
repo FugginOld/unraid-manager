@@ -176,6 +176,21 @@ seed fixtures were found to encode shapes the API cannot return.
   That guard is now removed in both: an F box inherits exactly like a C box.
   Capacity is a percentage and was never affected.
 
+  The removal itself was then verified on the box at `59e24df`, which needed
+  care: with `unit="C"` the old and new readers return the SAME thing, because
+  the guard only ever fired on F. So a C-mode reading proves the deploy took
+  nothing. The discriminating capture, both facts in one command so they cannot
+  be out of step:
+
+  ```
+  unit="F"  hot="45"  max="55"      ->  temp_warn=45 temp_crit=55
+  ```
+
+  The old readers return 50/60 for that input. Absence of the guard on the box
+  was confirmed separately (`out.pop('temp_warn'` and `$fahrenheit` both gone
+  from the installed files) — grepping for the word "Fahrenheit" would not have
+  worked, since the replacement comments still contain it.
+
   Note the range check at `THRESHOLD_BOUNDS` only half-covers the wrong answer:
   a Fahrenheit `113` would have been rejected as out of band `(20, 99)`, but a
   box set to `95 °F` would have stored `95`, passed the check, and been

@@ -65,7 +65,7 @@ jobs:
       - name: Lint JS
         run: find source -name '*.js' -print0 | xargs -0 -r -n1 node --check
 
-      # tests/php/run.sh also runs the three tests/js/*.mjs harnesses, and they
+      # tests/php/run.sh also runs the tests/js/*.mjs harnesses, and they
       # import vue, @vue/compiler-sfc and @vue/server-renderer out of
       # frontend/node_modules. ubuntu-latest ships node, so run.sh's
       # `command -v node` guard FIRES and the harnesses abort with

@@ -58,8 +58,8 @@ const rows = computed(() => {
     .filter(d => !smartFilter.value || smartOf(d) === smartFilter.value)
   // sort.js, not an inline comparator: a disk with no temperature used to
   // sort as if it were 0 C and lead an ascending sort, reading as the coldest
-  // drive in the fleet (P1 triage P2-7). SSR cannot click a header, so the
-  // rule is pinned where it can be - as a function.
+  // drive in the fleet (P1 triage P2-7). Pinned twice - as a function in
+  // views.mjs, and through the header click in interact.mjs.
   return sortRows(all, sortKey.value, sortAsc.value)
 })
 

@@ -18,7 +18,7 @@ export const frontend = path.join(here, '..', '..', 'frontend')
 // frontend/, so a bare `import 'vue'` would never find frontend/node_modules)
 // - the same reason live_singleton.mjs resolves `vue/index.mjs` by hand.
 const compilerSfcPath = path.join(frontend, 'node_modules', '@vue', 'compiler-sfc', 'dist', 'compiler-sfc.esm-browser.js')
-const vueEntryPath = path.join(frontend, 'node_modules', 'vue', 'index.mjs')
+export const vueEntryPath = path.join(frontend, 'node_modules', 'vue', 'index.mjs')
 const serverRendererPath = path.join(frontend, 'node_modules', 'vue', 'server-renderer', 'index.mjs')
 
 const { parse, compileScript, compileTemplate } = await import(pathToFileURL(compilerSfcPath).href)
@@ -35,13 +35,53 @@ export function renderedTextOnly (html) {
   return html.replace(/<!--[\s\S]*?-->/g, '')
 }
 
+/* The two stubs every VIEW harness needs, in one place because there are now
+   two of them (views.mjs renders, interact.mjs clicks) and a fixture shape
+   that drifts between the two would let one harness prove something the other
+   never sees. api.js and live.js open a real fetch, a real EventSource and two
+   real setIntervals at call time; stubbing them is what lets a fixture be
+   rendered at all. Both read globalThis.__um_fixture at setup() time. */
+const API_STUB = `
+  import { ref } from 'vue'
+  // NodeDrawer.vue imports get() directly; rendering App.vue pulls it in
+  // through Overview.vue.
+  export async function get () { return globalThis.__um_get ?? {} }
+  export function useEndpoint () {
+    const f = globalThis.__um_fixture ?? {}
+    return {
+      data: ref(f.data ?? null),
+      error: ref(f.error ?? null),
+      loading: ref(f.loading ?? false),
+      dbUnreadable: ref(f.dbUnreadable ?? false),
+      refresh: async () => {},
+    }
+  }
+`
+const LIVE_STUB = `
+  import { ref } from 'vue'
+  export const STALE_MS = 180000
+  export function useLive () {
+    const f = globalThis.__um_fixture ?? {}
+    return { stale: ref(f.unreachable ?? false), tick: () => {},
+             lastGood: ref(f.lastGood ?? Date.now()) }
+  }
+`
+// App.vue imports these as './', its views as '../' - both must be stubbed or
+// App.vue's own render pulls in the real fetch/EventSource/timers.
+export const VIEW_STUBS = {
+  './api.js': API_STUB,
+  './live.js': LIVE_STUB,
+  '../api.js': API_STUB,
+  '../live.js': LIVE_STUB,
+}
+
 /* Builds a compiler bound to its own scratch dir.
      stubs: { './relative/specifier.js': "module source" } - any import in a
      compiled SFC matching a key is rewritten to a generated module with that
      source. Views import ../api.js and ../live.js, which open a real fetch, a
      real EventSource and two real setIntervals at call time; stubbing them is
      what lets a fixture be rendered at all. */
-export function createCompiler ({ stubs = {} } = {}) {
+export function createCompiler ({ stubs = {}, client = false } = {}) {
   // A scratch dir INSIDE frontend/node_modules: the compiled output's own
   // `import ... from 'vue'` (emitted by compileScript/compileTemplate as bare
   // specifiers, out of our control) only resolves if the file that contains it
@@ -76,7 +116,7 @@ export function createCompiler ({ stubs = {} } = {}) {
       source: descriptor.template.content,
       filename: absVuePath,
       id,
-      ssr: true,
+      ssr: !client,
       ssrCssVars: [],
       // Links the template compile to the script's local bindings (imported
       // components, setup consts) so e.g. <StatusChip> resolves to the imported
@@ -106,10 +146,15 @@ export function createCompiler ({ stubs = {} } = {}) {
       }
       return whole
     })
-    const ssrCode = tmpl.code.replace('export function ssrRender', 'function ssrRender')
+    // Client mode emits `render`, SSR mode `ssrRender`, and the runtime uses
+    // whichever is attached. Everything above this line is the same compile:
+    // the interaction harness has to drive the SAME component the render
+    // harnesses assert on, or it proves nothing about what ships.
+    const fn = client ? 'render' : 'ssrRender'
+    const tmplCode = tmpl.code.replace(`export function ${fn}`, `function ${fn}`)
 
     const outPath = path.join(cacheDir, id.replace(/\.vue$/, '') + '.mjs')
-    fs.writeFileSync(outPath, `${scriptCode}\n${ssrCode}\n_sfc_main.ssrRender = ssrRender\nexport default _sfc_main\n`)
+    fs.writeFileSync(outPath, `${scriptCode}\n${tmplCode}\n_sfc_main.${fn} = ${fn}\nexport default _sfc_main\n`)
     compiled.set(absVuePath, outPath)
     return outPath
   }

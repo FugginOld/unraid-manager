@@ -12,47 +12,12 @@
 //   node tests/js/views.mjs   ->   "views: all pass" (exit 0)
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { createCompiler, frontend, reporter } from './ssr.mjs'
+import { createCompiler, frontend, reporter, VIEW_STUBS } from './ssr.mjs'
 
 const viewsDir = path.join(frontend, 'src', 'views')
 const { check, done } = reporter('views')
 
-const API_STUB = `
-      import { ref } from 'vue'
-      // NodeDrawer.vue imports get() directly; rendering App.vue pulls it in
-      // through Overview.vue.
-      export async function get () { return globalThis.__um_get ?? {} }
-      export function useEndpoint () {
-        const f = globalThis.__um_fixture ?? {}
-        return {
-          data: ref(f.data ?? null),
-          error: ref(f.error ?? null),
-          loading: ref(f.loading ?? false),
-          dbUnreadable: ref(f.dbUnreadable ?? false),
-          refresh: async () => {},
-        }
-      }
-    `
-const LIVE_STUB = `
-      import { ref } from 'vue'
-      export const STALE_MS = 180000
-      export function useLive () {
-        const f = globalThis.__um_fixture ?? {}
-        return { stale: ref(f.unreachable ?? false), tick: () => {},
-                 lastGood: ref(f.lastGood ?? Date.now()) }
-      }
-    `
-
-const ssr = createCompiler({
-  stubs: {
-    // App.vue imports these as './', its views as '../' - both must be stubbed
-    // or App.vue's own render pulls in the real fetch/EventSource/timers.
-    './api.js': API_STUB,
-    './live.js': LIVE_STUB,
-    '../api.js': API_STUB,
-    '../live.js': LIVE_STUB,
-  },
-})
+const ssr = createCompiler({ stubs: VIEW_STUBS })
 
 /* The fixture is read at setup() time by the api.js stub above, so it has to
    be in place before the render, not passed as a prop: these are views, not
@@ -83,9 +48,10 @@ const ORPHAN = {
 }
 
 try {
-  /* Column sorting (P1 triage P2-7). SSR cannot click a header, so this is the
-     only level at which the rule can be pinned - which is exactly why the
-     comparison was extracted from Disks.vue into sort.js. */
+  /* Column sorting (P1 triage P2-7), on the comparator's own terms - which is
+     why it was extracted from Disks.vue into sort.js in the first place. SSR
+     cannot click a header; interact.mjs pins the same rule from the other end,
+     through the <th> the operator actually clicks. */
   const { compareValues, sortRows } = await import(
     pathToFileURL(path.join(frontend, 'src', 'sort.js')).href)
 
@@ -258,8 +224,9 @@ try {
      `{'um-warn': true}`. The collapse hides every non-divergent row by
      default, so in this render "highlight the divergent cells" and "highlight
      all cells" produce identical output. Distinguishing them needs the
-     Show-all-rows toggle, which needs a click, which needs the interaction
-     harness that P1 triage P2-8 tracks. */
+     Show-all-rows toggle, which needs a click - closed in interact.mjs
+     ("with every row shown, only the divergent cells are still highlighted"),
+     which is the only check in the suite that `{'um-warn': true}` kills. */
   check('exactly the divergent cells are highlighted, and only those cells',
         (htmlDrift.match(/um-warn/g) || []).length === 6)
   check('a plugin present on a node reads "present"', htmlDrift.includes('present'))

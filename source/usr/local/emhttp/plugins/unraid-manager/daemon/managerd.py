@@ -502,7 +502,30 @@ class Manager(object):
             # Under the threshold the honest word is `degraded`: we tried, and
             # nothing answered. `record` runs earlier in this same cycle, so
             # the count already includes the failure being judged.
-            if overall == 'unknown' and not self.scheduler.is_unknown(node_id):
+            #
+            # The trigger is NOTHING ANSWERED, not the spelling of the failure.
+            # node_overall reaches `unknown` only when every status is literally
+            # `unknown`, which happens when the connection is REFUSED - and a
+            # real Unraid node whose API is stopped does not refuse anything.
+            # Something still replies over HTTP with a GraphQL InternalError,
+            # gqlclient raises DomainError, and all nine domains land on
+            # `error` instead. The rollup then took its any() branch to
+            # `degraded` and the node could never go grey however long it
+            # stayed dead: ten minutes of it on Raven, still amber, while the
+            # scheduler beside it read failures=3, unknown=True (2026-08-29).
+            #
+            # So the second clock was inside node_overall all along. `error`
+            # and `unknown` both mean we got nothing; both count here.
+            #
+            # is_unknown alone is the whole condition. `record` ran earlier in
+            # this cycle from these same results, so failures>=3 already
+            # implies this cycle read nothing - an extra `nothing answered`
+            # conjunct here cannot ever be the deciding term, and a branch no
+            # test can reach is a branch no test can protect. The ordering it
+            # leans on is documented as load-bearing where record is called.
+            if self.scheduler.is_unknown(node_id):
+                overall = 'unknown'
+            elif overall == 'unknown':
                 overall = 'degraded'
 
             # Name what dragged the node down, so the UI can say "Degraded -

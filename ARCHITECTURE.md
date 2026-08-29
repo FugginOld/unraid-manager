@@ -96,7 +96,12 @@ domain among readable ones is `degraded` — see the correction in
 it must also persist past the scheduler's `UNKNOWN_AFTER`. Below that a node
 reads `degraded` — we tried, and nothing answered — because a transient that
 greys a card and un-greys it inside a minute teaches an operator to stop
-believing the colour. Correspondingly, a blind poll is an *absence* of
+believing the colour. The trigger is *nothing answered*, never the spelling of
+the failure: **a node whose API is stopped does not refuse the connection.**
+Something still replies over HTTP with a GraphQL `InternalError`, so every
+domain lands on `error` rather than `unknown` (verified on Raven 2026-08-29,
+`unraid-api stop`, all nine domains). A rule that keyed on the word `unknown`
+therefore never fired on the commonest way a node dies. Correspondingly, a blind poll is an *absence* of
 information: it neither advances a debounce count nor resets one, so one lost
 cycle cannot launder a pending warning away.
 

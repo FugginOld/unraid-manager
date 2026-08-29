@@ -36,6 +36,21 @@ def good_post(fail=()):
     return post_fn
 
 
+def erroring_post():
+    """Every domain answers, and every answer carries a GraphQL error.
+
+    This is what a real Unraid node does when its API is stopped: something
+    still replies over HTTP, so gqlclient raises DomainError and the domain is
+    recorded `error` - NOT `unknown`. Verified on Raven 2026-08-29 with
+    `unraid-api stop`: all nine domains came back
+    `{'error': {'name': 'InternalError', ...}}` while the scheduler correctly
+    read failures=3, unknown=True.
+    """
+    def post_fn(address, port, key, query, timeout):
+        raise gqlclient.DomainError('InternalError: Graphql server is not running')
+    return post_fn
+
+
 class HealthCycleCase(unittest.TestCase):
     def setUp(self):
         self.dir = tempfile.mkdtemp()
@@ -177,6 +192,54 @@ class TestOverall(HealthCycleCase):
             self.assertEqual(m.scheduler.is_unknown('a1b2'),
                              self.health('overall')['state'] == 'unknown',
                              'cycle %d' % (i + 1))
+
+    def test_a_node_answering_only_errors_still_reaches_unknown(self):
+        """The defect this whole rule existed to prevent, found on hardware.
+
+        node_overall spelled `unknown` as "every domain status is literally the
+        string unknown", which only happens when the connection is REFUSED. An
+        Unraid box whose API is stopped still answers HTTP, so every domain is
+        `error` instead, the rollup took the any() branch to `degraded`, and
+        the node could never go grey no matter how long it stayed dead. Ten
+        minutes of it on Raven, still amber.
+
+        `error` and `unknown` both mean we got nothing. Both count.
+        """
+        m = self.manager(post_fn=erroring_post())
+        for t in (1000.0, 1030.0, 1060.0):
+            m.run_cycle('a1b2', collector.FAST, t)
+        self.assertEqual('unknown', self.health('overall')['state'])
+
+    def test_errors_are_degraded_before_the_threshold_too(self):
+        m = self.manager(post_fn=erroring_post())
+        m.run_cycle('a1b2', collector.FAST, 1000.0)
+        self.assertEqual('degraded', self.health('overall')['state'])
+
+    def test_how_a_failure_is_SPELLED_does_not_change_when_it_goes_grey(self):
+        """The property, not the two cases: a refused connection and an
+        erroring one are the same fact about the node, so they must grey it on
+        the same cycle."""
+        seen = {}
+        for label, post in (('transport', good_post(fail=FAST_DATA.keys())),
+                            ('domain', erroring_post())):
+            self.setUp()
+            m = self.manager(post_fn=post)
+            states = []
+            for i in range(4):
+                m.run_cycle('a1b2', collector.FAST, 1000.0 + 30 * i)
+                states.append(self.health('overall')['state'])
+            seen[label] = states
+        self.assertEqual(seen['transport'], seen['domain'])
+        self.assertEqual('unknown', seen['domain'][2])
+
+    def test_a_node_still_answering_one_domain_is_never_unknown(self):
+        # The other half: `nothing answered` is the trigger, so a node with one
+        # readable domain stays degraded however long it fails the rest.
+        m = self.manager(post_fn=good_post(fail=['array', 'shares', 'notifications',
+                                                 'metrics', 'parity']))
+        for i in range(6):
+            m.run_cycle('a1b2', collector.FAST, 1000.0 + 30 * i)
+        self.assertEqual('degraded', self.health('overall')['state'])
 
     def test_one_success_puts_a_node_back_before_the_threshold(self):
         posts = [good_post(fail=FAST_DATA.keys())] * 3 + [good_post()]

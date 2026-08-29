@@ -145,7 +145,7 @@ check('the payload names the zone the box is set to',
 $src = (string) file_get_contents($base . '/api/disks.php');
 check('session gated', str_contains($src, 'um_require_session()'));
 check('the dispatch reports whether the database was readable',
-      str_contains($src, "'db' => \$db !== null"));
+      str_contains($src, "'db' => um_db_readable(\$db)"));
 
 echo $fails === 0 ? "disks: all pass\n" : "disks: $fails FAILED\n";
 exit($fails === 0 ? 0 : 1);

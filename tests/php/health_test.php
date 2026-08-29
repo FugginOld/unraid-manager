@@ -197,7 +197,7 @@ check('session gated', str_contains($src, 'um_require_session()'));
 /* The dispatch block cannot run under CLI, so the only way to keep the
    unreadable-database flag from being silently reverted is to pin its text. */
 check('the dispatch reports whether the database was readable',
-      str_contains($src, "'db' => \$db !== null"));
+      str_contains($src, "'db' => um_db_readable(\$db)"));
 check('no key can leave', !str_contains(json_encode($out), 'SENTINEL-NOT-FOR-EXPORT'));
 
 /* P1 triage F-e: the sentinel above only ever lived in the `nodes` row, so

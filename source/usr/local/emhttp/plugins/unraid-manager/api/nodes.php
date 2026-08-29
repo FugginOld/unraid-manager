@@ -198,5 +198,5 @@ if (PHP_SAPI !== 'cli') {
         if ($node === null) um_json(['error' => 'no such node'], 404);
         um_json($node);
     }
-    um_json(['nodes' => um_nodes_list($db), 'db' => $db !== null]);
+    um_json(['nodes' => um_nodes_list($db), 'db' => um_db_readable($db)]);
 }

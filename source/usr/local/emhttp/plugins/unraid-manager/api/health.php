@@ -120,5 +120,5 @@ function um_fleet_health(?SQLite3 $db): array {
 if (PHP_SAPI !== 'cli') {
     um_require_session();
     $db = um_db();
-    um_json(um_fleet_health($db) + ['db' => $db !== null]);
+    um_json(um_fleet_health($db) + ['db' => um_db_readable($db)]);
 }

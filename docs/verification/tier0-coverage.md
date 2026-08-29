@@ -150,3 +150,23 @@ seed fixtures were found to encode shapes the API cannot return.
     shape and are ignored by the top bar. Verified live 2026-08-26.
 
 - Raven's `disks` 504 root cause (box-side issue, not a blocker).
+
+- **Does `dynamix.cfg` store `hot`/`max` in the display unit, or always in
+  Celsius?** Open, and it changes behaviour. `[display]` carries both `unit`
+  (`"C"` on Raven) and the disk temperature thresholds `hot`/`max`, and P1's
+  F-8 inherits those as ours. If a box set to Fahrenheit stores `hot="113"`,
+  the value needs converting; if it stores `hot="45"` and `unit` only governs
+  how the webGUI *renders* it, converting would produce 7 °C and warn on every
+  disk forever.
+
+  Neither answer can be reached from this repo, and the two failures point in
+  opposite directions, so `config.py` and `common.php` both **decline to
+  inherit temperature thresholds at all** when `unit` is `F`, falling back to
+  our own 50/60. Capacity is a percentage and is unaffected.
+
+  Thirty seconds to settle for anyone with a box set to Fahrenheit: set
+  Settings → Disk Settings' temperature fields, then read
+  `/boot/config/plugins/dynamix/dynamix.cfg`'s `[display] hot=`. If the stored
+  number matches what the page displayed, dynamix stores the display unit and
+  the conversion should go back in; if it is the Celsius equivalent, the
+  current behaviour is right and only the comments need updating.

@@ -394,6 +394,28 @@ function um_readonly(SQLite3 $db): SQLite3 {
     return $db;
 }
 
+/* Whether any um_query in THIS request gave up and answered nothing.
+ *
+ * The silent [] is the right degradation for a dropped derived table - a node
+ * with no node_health rows rolls up to "unknown", which is true. It LIES for a
+ * missing `nodes` table: the fleet then reads "0 node(s)" with db:true and no
+ * banner, which is indistinguishable from a fleet nobody has enrolled. That is
+ * the exact invariant Task 13 item 7 and the whole dbUnreadable path exist to
+ * protect, so the flag folds into the db flag the shell already renders rather
+ * than growing a second banner. Narrow - migrate() never drops `nodes`, so it
+ * needs a corrupt or foreign database - but it fails in the one direction that
+ * tells the operator everything is fine. */
+function um_query_failed(?bool $set = null): bool {
+    static $failed = false;
+    if ($set !== null) $failed = $set;
+    return $failed;
+}
+
+/* The db flag every endpoint reports: openable AND actually answering. */
+function um_db_readable(?SQLite3 $db): bool {
+    return $db !== null && !um_query_failed();
+}
+
 function um_query(SQLite3 $db, string $sql, array $params = []): array {
     /* SQLite3 has no fetchAll. One helper beats four hand-rolled while loops.
      *
@@ -410,18 +432,20 @@ function um_query(SQLite3 $db, string $sql, array $params = []): array {
     try {
         $stmt = $db->prepare($sql);
     } catch (Throwable $e) {
+        um_query_failed(true);
         return [];
     }
-    if ($stmt === false) return [];
+    if ($stmt === false) { um_query_failed(true); return []; }
     foreach ($params as $name => $value) {
         $stmt->bindValue($name, $value, is_int($value) ? SQLITE3_INTEGER : SQLITE3_TEXT);
     }
     try {
         $result = $stmt->execute();
     } catch (Throwable $e) {
+        um_query_failed(true);
         return [];
     }
-    if ($result === false) return [];
+    if ($result === false) { um_query_failed(true); return []; }
     $rows = [];
     while ($row = $result->fetchArray(SQLITE3_ASSOC)) $rows[] = $row;
     $result->finalize();

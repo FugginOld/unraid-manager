@@ -103,5 +103,5 @@ function um_drift_matrix(?SQLite3 $db): array {
 if (PHP_SAPI !== 'cli') {
     um_require_session();
     $db = um_db();
-    um_json(um_drift_matrix($db) + ['db' => $db !== null]);
+    um_json(um_drift_matrix($db) + ['db' => um_db_readable($db)]);
 }

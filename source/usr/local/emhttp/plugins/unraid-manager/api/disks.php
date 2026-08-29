@@ -145,5 +145,5 @@ function um_fleet_disks(?SQLite3 $db): array {
 if (PHP_SAPI !== 'cli') {
     um_require_session();
     $db = um_db();
-    um_json(um_fleet_disks($db) + ['db' => $db !== null]);
+    um_json(um_fleet_disks($db) + ['db' => um_db_readable($db)]);
 }

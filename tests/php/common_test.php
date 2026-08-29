@@ -189,6 +189,39 @@ try {
 check('a query against a missing table answers no rows, not a fatal', $missing === []);
 check('a syntactically broken query answers no rows too',
       um_query($rodb, 'SELECT FROM WHERE') === []);
+/* Both checks above fail at prepare(), so the execute() catch was unreached -
+   F-c was half-proven and the "7 of 7" I reported was 6 of 7 once the two
+   catches are counted separately. A write COMPILES fine and fails when it
+   runs, which is the shape of the reachable production case (SQLITE_BUSY under
+   WAL contention). It also states the rule this helper exists for: um_query is
+   the READ layer, and handing it a write must answer nothing, not fatal. */
+check('a write that only fails at execute answers no rows, not a fatal',
+      um_query($rodb, 'INSERT INTO t VALUES(2)') === []);
+check('...and it really did not write', $rodb->querySingle('SELECT COUNT(*) FROM t') === 0);
+
+/* The silent [] is the right degradation for a dropped DERIVED table - a node
+   with no node_health rows rolls up to "unknown", which is true. It LIES for a
+   missing `nodes` table: the fleet then reads "0 node(s)" with db:true and no
+   banner, which is indistinguishable from a fleet nobody has enrolled. That is
+   the invariant Task 13 item 7 and the whole dbUnreadable path exist to
+   protect, so a query that gave up folds into the flag the shell already
+   renders rather than growing a second banner.
+   Order matters below: the flag is per-request and sticky, so it is read
+   BEFORE the failing query above would have set it... which it already has,
+   which is exactly what the first check asserts. */
+check('a failed query is remembered for the db flag', um_query_failed() === true);
+$fresh = new SQLite3(':memory:');
+$fresh->enableExceptions(true);
+um_query_failed(false);
+check('a database that answers is readable', um_db_readable($fresh) === true);
+$fresh->exec('CREATE TABLE ok_table(x)');
+um_query($fresh, 'SELECT * FROM ok_table');
+check('...and a query that succeeds does not set the flag', um_db_readable($fresh) === true);
+um_query($fresh, 'SELECT * FROM a_table_that_does_not_exist');
+check('a database that cannot answer is NOT reported readable',
+      um_db_readable($fresh) === false);
+check('a null handle is unreadable whatever the flag says', um_db_readable(null) === false);
+um_query_failed(false);
 check('the read layer uses sqlite3, not pdo',
       str_contains($common_src, 'function um_db(): ?SQLite3')
       && str_contains($common_src, 'new SQLite3('));

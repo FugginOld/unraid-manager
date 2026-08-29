@@ -232,5 +232,41 @@ check('a field the endpoint does not select cannot ride along in a payload',
 check('...while the fields it DOES select still arrive',
       str_contains(json_encode(um_fleet_health($leaky)), '7.3.2'));
 
+
+/* P1 triage P2-6: a card must be able to age out on its own, not only via the
+   fleet-wide banner. The age is computed HERE, off the server clock, for the
+   same reason um_fleet_age is - a browser whose clock is skewed must not be
+   able to grey a healthy fleet or hide a dead one. */
+$aged = um_fleet_health($db);
+$agedById = array_column($aged['nodes'], null, 'id');
+check('every node carries its own age in seconds',
+      is_int($agedById['a1b2']['age'] ?? null));
+check('the per-node age is measured from the server clock',
+      abs($agedById['a1b2']['age'] - (time() - strtotime('2026-08-27T10:00:00Z'))) <= 2);
+
+$now = new SQLite3(':memory:');
+$now->enableExceptions(true);
+$now->exec('CREATE TABLE nodes(id TEXT PRIMARY KEY, name TEXT, address TEXT, port INTEGER,
+            tier INTEGER, enabled INTEGER, added_at TEXT, last_seen TEXT, api_key TEXT)');
+$now->exec('CREATE TABLE node_state(node_id TEXT, domain TEXT, status TEXT, error TEXT,
+            fetched_at TEXT, payload TEXT, PRIMARY KEY(node_id, domain))');
+$now->exec('CREATE TABLE node_health(node_id TEXT, indicator TEXT, state TEXT, value REAL,
+            basis TEXT, pending_state TEXT, pending_count INTEGER, since TEXT,
+            updated_at TEXT, PRIMARY KEY(node_id, indicator))');
+$stamp = gmdate('Y-m-d\TH:i:s\Z');
+$now->exec("INSERT INTO nodes VALUES('f1','Fresh','10.0.0.9',80,0,1,'$stamp',NULL,NULL)");
+$now->exec("INSERT INTO nodes VALUES('n0','Never','10.0.0.8',80,0,1,'$stamp',NULL,NULL)");
+$now->exec("INSERT INTO node_health VALUES('f1','overall','ok',NULL,'all clear',
+            NULL,0,'$stamp','$stamp')");
+$freshById = array_column(um_fleet_health($now)['nodes'], null, 'id');
+check('a verdict written this second is not stale',
+      ($freshById['f1']['age'] ?? null) !== null && $freshById['f1']['age'] <= 2);
+check('a node with no verdict at all has no age, not an age of zero',
+      array_key_exists('age', $freshById['n0']) && $freshById['n0']['age'] === null);
+/* Raven's last_seen is NULL while its overall row is stamped, so a version
+   that measured last_seen instead would report null here and never grey. */
+check('the age follows the verdict (updated_at), not last_seen',
+      $agedById['b2c3']['age'] !== null && $agedById['b2c3']['updated_at'] !== null);
+
 echo $fails === 0 ? "health: all pass\n" : "health: $fails FAILED\n";
 exit($fails === 0 ? 0 : 1);

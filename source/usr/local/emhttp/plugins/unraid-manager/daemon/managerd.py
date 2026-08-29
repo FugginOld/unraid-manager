@@ -491,6 +491,20 @@ class Manager(object):
 
             overall = health.node_overall([r.status for r in results], settled)
 
+            # ONE clock owns `unknown` (P1 triage P2-3). node_overall is pure -
+            # it sees a single cycle, so all-domains-failed looks identical on
+            # the first failure and the tenth. The scheduler has counted them
+            # since P0 and already promised UNKNOWN_AFTER; deriving a second
+            # answer here meant a transient greyed a card while the daemon
+            # still called the node reachable, and two definitions of one word
+            # reaching an operator is how a colour stops being believed.
+            #
+            # Under the threshold the honest word is `degraded`: we tried, and
+            # nothing answered. `record` runs earlier in this same cycle, so
+            # the count already includes the failure being judged.
+            if overall == 'unknown' and not self.scheduler.is_unknown(node_id):
+                overall = 'degraded'
+
             # Name what dragged the node down, so the UI can say "Degraded -
             # capacity, thermal" instead of just "Degraded". `basis` means WHY
             # everywhere else in this table; the overall row is no exception.

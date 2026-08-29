@@ -141,10 +141,52 @@ class TestOverall(HealthCycleCase):
         m.run_cycle('a1b2', collector.FAST, 1030.0)
         self.assertEqual('degraded', self.health('overall')['state'])
 
-    def test_an_unreachable_node_is_unknown(self):
+    def test_one_failed_cycle_is_degraded_not_unknown(self):
+        """P1 triage P2-3. `overall` used to re-derive `unknown` from a single
+        cycle, while the scheduler's UNKNOWN_AFTER=3 still called the same node
+        reachable - two definitions of one word reaching the operator from two
+        clocks. A transient turned a card grey and back inside a minute, which
+        is how an operator learns to stop believing a colour.
+
+        One failed cycle is honest as `degraded`: we tried, and nothing
+        answered. It is not yet `unknown`.
+        """
         m = self.manager(post_fn=good_post(fail=FAST_DATA.keys()))
         m.run_cycle('a1b2', collector.FAST, 1000.0)
+        self.assertEqual('degraded', self.health('overall')['state'])
+
+    def test_two_failed_cycles_are_still_not_unknown(self):
+        m = self.manager(post_fn=good_post(fail=FAST_DATA.keys()))
+        for t in (1000.0, 1030.0):
+            m.run_cycle('a1b2', collector.FAST, t)
+        self.assertEqual('degraded', self.health('overall')['state'])
+
+    def test_an_unreachable_node_is_unknown_on_the_third_cycle(self):
+        # The threshold the scheduler already promised, now the only one.
+        m = self.manager(post_fn=good_post(fail=FAST_DATA.keys()))
+        for t in (1000.0, 1030.0, 1060.0):
+            m.run_cycle('a1b2', collector.FAST, t)
         self.assertEqual('unknown', self.health('overall')['state'])
+
+    def test_the_chip_and_the_scheduler_never_disagree(self):
+        # Stated as the property rather than as a count, so moving
+        # UNKNOWN_AFTER moves both halves together or fails here.
+        m = self.manager(post_fn=good_post(fail=FAST_DATA.keys()))
+        for i in range(managerd.UNKNOWN_AFTER + 2):
+            m.run_cycle('a1b2', collector.FAST, 1000.0 + 30 * i)
+            self.assertEqual(m.scheduler.is_unknown('a1b2'),
+                             self.health('overall')['state'] == 'unknown',
+                             'cycle %d' % (i + 1))
+
+    def test_one_success_puts_a_node_back_before_the_threshold(self):
+        posts = [good_post(fail=FAST_DATA.keys())] * 3 + [good_post()]
+        m = self.manager(post_fn=lambda *a, **k: posts[0](*a, **k))
+        for i in range(3):
+            m.run_cycle('a1b2', collector.FAST, 1000.0 + 30 * i)
+        self.assertEqual('unknown', self.health('overall')['state'])
+        posts.pop(0); posts.pop(0); posts.pop(0)
+        m.run_cycle('a1b2', collector.FAST, 1090.0)
+        self.assertNotEqual('unknown', self.health('overall')['state'])
 
     def test_one_blind_domain_is_degraded_not_unknown(self):
         m = self.manager(post_fn=good_post(fail=['metrics']))

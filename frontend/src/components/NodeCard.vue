@@ -2,6 +2,7 @@
 import { inject } from 'vue'
 import StatusChip from './StatusChip.vue'
 import { localTime } from '../time.js'
+import { STALE_MS } from '../live.js'
 
 // Provided by App.vue from the endpoint payload. Rendered standalone (a test
 // harness, or a future embed) there is no provider, so undefined falls through
@@ -57,6 +58,28 @@ function unreadText (unread) {
   if (!unread) return null
   return `${unread.alert} alert · ${unread.warning} warn · ${unread.info} info`
 }
+
+// P1 triage P2-6. The fleet banner says the DATA is old; this says which
+// node's verdict is, and only a stored age can - when the daemon dies nothing
+// is written at all, so the row simply stops moving while still reading `ok`.
+// Server-computed (api/health.php), because a skewed browser clock must not
+// be able to grey a healthy fleet.
+//
+// Same threshold as the banner, imported rather than repeated: two copies of
+// "three minutes" would drift, and the whole point of this round of fixes is
+// that one word must not have two clocks behind it.
+function isStale (node) {
+  return node.age !== null && node.age !== undefined && node.age * 1000 > STALE_MS
+}
+
+// Asymmetric, and the asymmetry is the point. A stale `ok` is an assertion we
+// can no longer make, so it greys. A stale `degraded` is still true and still
+// the thing the operator needs to see, so it keeps its colour and gets marked
+// instead - greying it would throw the finding away to make a point about
+// freshness.
+function chipState (node) {
+  return isStale(node) && node.state === 'ok' ? 'unknown' : node.state
+}
 </script>
 
 <template>
@@ -65,7 +88,7 @@ function unreadText (unread) {
        @keydown.space.prevent="$emit('open', node.id)">
     <div class="um-card-head">
       <strong>{{ node.name }}</strong>
-      <StatusChip :state="node.state" />
+      <StatusChip :state="chipState(node)" />
     </div>
 
     <div class="um-card-line">
@@ -106,6 +129,10 @@ function unreadText (unread) {
 
     <div class="um-card-foot um-hint">
       <span v-if="node.state !== 'ok'">{{ node.state }} {{ held(node.since) }} · </span>
+      <!-- The chip alone cannot say WHY it went grey, and "grey for no stated
+           reason" is how an operator learns to ignore grey. -->
+      <span v-if="isStale(node)" class="um-unknown">{{ node.state === 'ok' ? 'no update' : 'stale' }},
+        as of {{ localTime(node.updated_at, tz, clock12) }} · </span>
       <!-- fleet.js styled a never-seen node's cell as um-unknown - "we have
            not heard" gets the same distinct treatment here (fix round 1,
            item 8). -->

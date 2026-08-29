@@ -92,6 +92,21 @@ At node level, `unknown` means *nothing about this node is readable*. One blind
 domain among readable ones is `degraded` — see the correction in
 [docs/verification/p0-exit.md](docs/verification/p0-exit.md).
 
+**One clock owns `unknown`.** Nothing readable is necessary but not sufficient:
+it must also persist past the scheduler's `UNKNOWN_AFTER`. Below that a node
+reads `degraded` — we tried, and nothing answered — because a transient that
+greys a card and un-greys it inside a minute teaches an operator to stop
+believing the colour. Correspondingly, a blind poll is an *absence* of
+information: it neither advances a debounce count nor resets one, so one lost
+cycle cannot launder a pending warning away.
+
+**Stale good news greys; stale bad news stays.** When the daemon dies nothing
+is written at all, so a row simply stops moving while still reading `ok`. Each
+node therefore carries a server-computed `age`, and past the same threshold the
+fleet banner uses, a stale `ok` renders `unknown` while a stale `degraded`
+keeps its verdict and is marked stale — the finding is still true and still the
+thing worth seeing.
+
 ## The seams that make it testable
 
 No test may require a live Unraid box. That constraint drove most of the design:

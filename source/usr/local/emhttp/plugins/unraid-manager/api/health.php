@@ -15,6 +15,16 @@ function um_health_rows(SQLite3 $db): array {
     return $out;
 }
 
+/* Seconds since one stored instant, measured on the SERVER. Both callers need
+   it for the same reason: a viewer whose clock is skewed must not be able to
+   grey a healthy fleet, nor hide a dead one behind a fresh-looking age. */
+function um_age_seconds($iso): ?int {
+    if ($iso === null || $iso === '') return null;
+    $ts = strtotime((string) $iso);
+    if ($ts === false) return null;
+    return max(0, time() - $ts);
+}
+
 /* How old the freshest thing in the fleet is, in seconds, against THIS box's
    clock. P1 exit finding F-1: the pane's stale banner fired on
    `Date.now() - lastGood`, and lastGood was stamped every time this endpoint
@@ -41,7 +51,7 @@ function um_fleet_age(array $nodes): array {
         if ($newest === null || $ts > $newest[0]) $newest = [$ts, (string) $seen];
     }
     if ($newest === null) return ['newest' => null, 'age' => null];
-    return ['newest' => $newest[1], 'age' => max(0, time() - $newest[0])];
+    return ['newest' => $newest[1], 'age' => um_age_seconds($newest[1])];
 }
 
 function um_fleet_health(?SQLite3 $db): array {
@@ -93,6 +103,12 @@ function um_fleet_health(?SQLite3 $db): array {
         $out['state'] = $state;
         $out['since'] = $overall['since'] ?? null;
         $out['updated_at'] = $overall['updated_at'] ?? null;
+        /* P1 triage P2-6. The fleet banner says the DATA is old; this says
+           which node's verdict is. Measured from updated_at, not last_seen:
+           last_seen is about reaching the box, and the question a grey chip
+           answers is "how old is this verdict" - a node the daemon never
+           managed to stamp has no age at all rather than an age of zero. */
+        $out['age'] = um_age_seconds($out['updated_at']);
         $out['indicators'] = $indicators;
         $out['array_state'] = $array['state'] ?? null;
         $out['array_empty'] = $array['empty'] ?? null;

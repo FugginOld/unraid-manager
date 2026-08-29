@@ -138,5 +138,44 @@ class TestNodeOverall(unittest.TestCase):
         self.assertEqual('ok', health.node_overall(['ok'], self.ind(thermal=UNKNOWN)))
 
 
+class TestABlindPollIsNotAnObservation(unittest.TestCase):
+    """P1 triage P2-2. A poll that could not judge is an ABSENCE of
+    information. It must neither advance a count nor reset one.
+
+    Entering unknown used to clear pending_state/pending_count, so a single
+    blind poll laundered a warning away: two OK samples, one lost poll, one
+    more OK and the card was green after four cycles instead of five. The
+    operator watched that five-cycle clear by hand during the P1 exit trial;
+    it is the asymmetry the whole module exists for.
+    """
+
+    def test_a_blind_poll_does_not_launder_a_pending_clear(self):
+        seen = run(WARN, [OK, OK, UNKNOWN, OK, OK, OK])
+        self.assertEqual([WARN, WARN, UNKNOWN, UNKNOWN, UNKNOWN, OK], seen)
+
+    def test_the_clear_still_takes_five_good_samples_in_total(self):
+        # Stated as a count rather than a sequence, so a fix that merely
+        # shifted the blind poll one place along would not satisfy it.
+        seen = run(WARN, [OK, OK, UNKNOWN, OK, OK])
+        self.assertEqual(UNKNOWN, seen[-1],
+                         'four good samples plus a blind one is not five')
+
+    def test_a_blind_poll_does_not_reset_a_pending_escalation_either(self):
+        # The same rule pointing the other way: one WARN, a lost poll, one
+        # more WARN is still two agreeing observations of a warning.
+        self.assertEqual([OK, UNKNOWN, WARN], run(OK, [WARN, UNKNOWN, WARN]))
+
+    def test_good_news_after_a_quiet_spell_is_still_believed_at_once(self):
+        # The rule this must NOT break: nothing was pending, so the node
+        # answering and being fine is believed immediately.
+        self.assertEqual([UNKNOWN, OK], run(OK, [UNKNOWN, OK]))
+
+    def test_a_long_blind_spell_holds_the_count_it_had(self):
+        seen = run(WARN, [OK, OK, UNKNOWN, UNKNOWN, UNKNOWN, OK, OK, OK])
+        self.assertEqual([UNKNOWN] * 5, seen[2:7],
+                         'three blind polls neither advance nor reset the two')
+        self.assertEqual(OK, seen[-1], 'the third good sample after is the fifth')
+
+
 if __name__ == '__main__':
     unittest.main()

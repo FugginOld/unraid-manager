@@ -182,27 +182,44 @@ def apply_hysteresis(current, proposed, pending_state, pending_count,
 
     unknown is not a severity, so it does not use the ladder - but it is not a
     free pass either. Entering unknown is immediate; leaving it is immediate
-    only toward ok. Coming back blind-to-bad still needs confirming, or a
-    single bad reading after a blind spell flips the card with no debounce at
-    all.
-    """
-    if proposed == current:
-        return current, None, 0
+    only toward ok, and only when nothing was already on its way. Coming back
+    blind-to-bad still needs confirming, or a single bad reading after a blind
+    spell flips the card with no debounce at all.
 
+    A blind poll is an ABSENCE of information, so it neither advances a count
+    nor resets one - see the two branches below.
+    """
+    # Checked BEFORE the agreement branch below, which zeroes the count: a
+    # SECOND consecutive blind poll agrees with the unknown already showing,
+    # so it took that path and laundered the banked count anyway - the same
+    # P2-2 defect, one cycle later.
+    #
     # ENTERING unknown is immediate. It means this poll could not judge, and
     # continuing to display the previous verdict would assert something we no
     # longer know.
+    #
+    # But it CARRIES the pending count rather than clearing it (P1 triage
+    # P2-2). Zeroing it let one lost poll launder a warning away: WARN with
+    # two OK samples banked, one blind cycle, one more OK, and the card was
+    # green after four cycles instead of the five the operator was promised.
+    # An absence of information is not evidence of recovery.
     if proposed == UNKNOWN:
-        return proposed, None, 0
+        return proposed, pending_state, pending_count
+
+    if proposed == current:
+        return current, None, 0
 
     if current == UNKNOWN:
-        # LEAVING unknown is asymmetric too. Good news is believed at once - the
-        # node answered and it is fine. Bad news still has to be confirmed,
-        # exactly as it would from ok, so one bad reading after a blind spell
-        # cannot flip the card on its own.
-        if proposed == OK:
+        # LEAVING unknown is asymmetric too. Good news is believed at once -
+        # the node answered and it is fine - but only if no clear was already
+        # part-way through. One that was three samples in when we went blind
+        # resumes from three; otherwise the blind poll is a free pass over the
+        # remaining two, which is P2-2 again wearing the other hat.
+        if proposed == OK and not (pending_state == OK and pending_count):
             return proposed, None, 0
-        needed = up
+        # Bad news still has to be confirmed, exactly as it would from ok, so
+        # one bad reading after a blind spell cannot flip the card on its own.
+        needed = down if proposed == OK else up
     else:
         needed = up if LADDER.index(proposed) > LADDER.index(current) else down
 

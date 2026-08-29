@@ -299,7 +299,11 @@ try {
      rows: the transport clock never trips and the banner never appears. The
      payload's own `age` is the only honest signal. */
   const App = await ssr.load(path.join(frontend, 'src', 'App.vue'))
-  const fleet = { fleet: { nodes: 1, ok: 1, degraded: 0, unknown: 0 }, nodes: [] }
+  /* health.php ships the staleness threshold with the payload so the banner
+     and the cards judge by one number. 180 stated outright, not imported, so
+     widening the server's constant cannot widen these checks with it. */
+  const fleet = { fleet: { nodes: 1, ok: 1, degraded: 0, unknown: 0 }, nodes: [],
+                  stale_after: 180 }
 
   const htmlDaemonDead = await renderView(App, {
     // The exact Raven case: the endpoint answers fine, the data is 20 minutes
@@ -365,6 +369,29 @@ try {
   check('a fleet nothing has been collected from yet does not banner',
         !/um-stale-banner/.test(htmlNeverCollected))
 
+  /* The banner must judge by the threshold the SERVER shipped, not by a copy
+     of "three minutes" kept here. Both cases use an age that lands on the
+     opposite side of the default from the one it is given, so a revert to a
+     hardcoded 180 fails them in both directions. */
+  const htmlWideThreshold = await renderView(App, {
+    data: { ...fleet, newest: '2026-08-28T19:34:38Z', age: 300, stale_after: 600 },
+    unreachable: false,
+  })
+  check('an age past three minutes does NOT banner when the server allows ten',
+        !/um-stale-banner/.test(htmlWideThreshold))
+  const htmlTightThreshold = await renderView(App, {
+    data: { ...fleet, newest: '2026-08-28T19:34:38Z', age: 90, stale_after: 60 },
+    unreachable: false,
+  })
+  check('...and an age inside three minutes DOES banner when the server allows one',
+        /um-stale-banner/.test(htmlTightThreshold))
+  const htmlNoThreshold = await renderView(App, {
+    data: { fleet: fleet.fleet, nodes: [], newest: '2026-08-28T19:34:38Z', age: 99999 },
+    unreachable: false,
+  })
+  check('with no threshold shipped the banner makes no claim rather than inventing one',
+        !/um-stale-banner/.test(htmlNoThreshold))
+
   /* The transport clock still matters on its own: php-fpm down, nginx down, a
      500. Then there is no fresh payload to read an age from at all. */
   const htmlUnreachable = await renderView(App, {
@@ -395,6 +422,18 @@ try {
     data: { ...fleet, nodes: [NODE], newest: '2026-08-28T19:34:38Z', age: 12,
             tz: 'America/New_York', clock12: true },
   })
+  /* The provide leg for the threshold, same reasoning as the timezone one
+     above: node_card.mjs supplies it directly, so without this App.vue could
+     stop providing it and every card would silently lose its staleness
+     wording with the suite green. */
+  const htmlStaleCard = await renderView(App, {
+    data: { ...fleet, age: 12, newest: '2026-08-28T19:34:38Z', tz: 'UTC',
+            nodes: [{ ...NODE, state: 'degraded', stored_state: 'degraded',
+                      age: 900, updated_at: '2026-08-28T19:34:38Z' }] },
+  })
+  check('a card inside the shell is told the threshold and marks itself stale',
+        /stale/.test(htmlStaleCard) && htmlStaleCard.includes('2026-08-28, 19:34:38 UTC'))
+
   check('a card inside the shell renders its last-seen in the fleet timezone',
         htmlWithCard.includes('3:34:38 PM') && !htmlWithCard.includes('19:34:38'))
   check('the card gets the clock preference too, not just the zone',

@@ -105,6 +105,7 @@ check('a null db answers empty rather than fataling',
       um_fleet_health(null) === ['fleet' => ['nodes' => 0, 'ok' => 0, 'degraded' => 0,
                                              'unknown' => 0], 'nodes' => [],
                                  'newest' => null, 'age' => null,
+                                 'stale_after' => UM_STALE_AFTER,
                                  'tz' => um_local_timezone(),
                                  'clock12' => um_display_clock_12h()]);
 
@@ -267,6 +268,61 @@ check('a node with no verdict at all has no age, not an age of zero',
    that measured last_seen instead would report null here and never grey. */
 check('the age follows the verdict (updated_at), not last_seen',
       $agedById['b2c3']['age'] !== null && $agedById['b2c3']['updated_at'] !== null);
+
+
+/* The fleet summary must be a TALLY OF THE CARDS, always. Verified wrong on
+   Raven 2026-08-29: the line read "0 unknown" while a card beside it showed
+   "? Unknown", because the staleness downgrade lived in NodeCard.vue and the
+   count was taken here from the stored state. Two implementations of one rule
+   in two languages - the exact defect this round of work was fixing, and I
+   reintroduced it one layer up. The downgrade now happens once, here, and the
+   card renders what it is given. */
+function um_tally(array $out): array {
+    $t = ['ok' => 0, 'degraded' => 0, 'unknown' => 0];
+    foreach ($out['nodes'] as $n) { $t[$n['state']]++; }
+    return $t;
+}
+$tallied = um_fleet_health($db);
+check('the fleet summary is a tally of the node states it ships',
+      um_tally($tallied) === ['ok' => $tallied['fleet']['ok'],
+                              'degraded' => $tallied['fleet']['degraded'],
+                              'unknown' => $tallied['fleet']['unknown']]);
+check('the payload names the threshold it used, so no client re-invents one',
+      is_int($tallied['stale_after'] ?? null) && $tallied['stale_after'] > 0);
+
+$mix = new SQLite3(':memory:');
+$mix->enableExceptions(true);
+$mix->exec('CREATE TABLE nodes(id TEXT PRIMARY KEY, name TEXT, address TEXT, port INTEGER,
+            tier INTEGER, enabled INTEGER, added_at TEXT, last_seen TEXT, api_key TEXT)');
+$mix->exec('CREATE TABLE node_state(node_id TEXT, domain TEXT, status TEXT, error TEXT,
+            fetched_at TEXT, payload TEXT, PRIMARY KEY(node_id, domain))');
+$mix->exec('CREATE TABLE node_health(node_id TEXT, indicator TEXT, state TEXT, value REAL,
+            basis TEXT, pending_state TEXT, pending_count INTEGER, since TEXT,
+            updated_at TEXT, PRIMARY KEY(node_id, indicator))');
+$fresh = gmdate('Y-m-d\TH:i:s\Z');
+$old   = gmdate('Y-m-d\TH:i:s\Z', time() - 7200);
+foreach ([['g1', 'FreshOk', 'ok', $fresh], ['g2', 'StaleOk', 'ok', $old],
+          ['g3', 'StaleBad', 'degraded', $old]] as $r) {
+    [$id, $name, $state, $stamp] = $r;
+    $mix->exec("INSERT INTO nodes VALUES('$id','$name','10.0.0.1',80,0,1,'$fresh',NULL,NULL)");
+    $mix->exec("INSERT INTO node_health VALUES('$id','overall','$state',NULL,'b',
+                NULL,0,'$fresh','$stamp')");
+}
+$mixed = um_fleet_health($mix);
+$mixById = array_column($mixed['nodes'], null, 'id');
+check('a stale ok node reports unknown - old good news is a claim we cannot make',
+      $mixById['g2']['state'] === 'unknown');
+check('...while a fresh ok node is untouched', $mixById['g1']['state'] === 'ok');
+/* The asymmetry, server side now: a stale finding is still true and still the
+   thing worth seeing, so it keeps its verdict rather than being greyed away. */
+check('a stale degraded node keeps its verdict', $mixById['g3']['state'] === 'degraded');
+check('the counts follow the downgrade, not the stored row',
+      $mixed['fleet']['ok'] === 1 && $mixed['fleet']['unknown'] === 1
+      && $mixed['fleet']['degraded'] === 1);
+check('the stored verdict still travels, so the card can say what went stale',
+      $mixById['g2']['stored_state'] === 'ok');
+check('a node with no age at all is never downgraded by staleness',
+      um_tally($mixed)['unknown'] === 1);
 
 echo $fails === 0 ? "health: all pass\n" : "health: $fails FAILED\n";
 exit($fails === 0 ? 0 : 1);

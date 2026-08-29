@@ -18,6 +18,21 @@ function um_health_rows(SQLite3 $db): array {
 /* Seconds since one stored instant, measured on the SERVER. Both callers need
    it for the same reason: a viewer whose clock is skewed must not be able to
    grey a healthy fleet, nor hide a dead one behind a fresh-looking age. */
+/* How old a node's own verdict may get before the pane stops believing it.
+   ONE definition, shipped to the client as `stale_after` so the banner and the
+   cards cannot drift apart - and so no browser has to hardcode a copy. */
+const UM_STALE_AFTER = 180;
+
+/* A verdict too old to assert, resolved to what the operator should see.
+   Asymmetric, deliberately: a stale `ok` is a claim we can no longer make, so
+   it becomes `unknown`; a stale `degraded` is still true and still the thing
+   worth seeing, so it keeps its verdict and the card marks it instead.
+   Greying a finding away to make a point about freshness loses the finding. */
+function um_effective_state(string $state, ?int $age): string {
+    if ($state === 'ok' && $age !== null && $age > UM_STALE_AFTER) return 'unknown';
+    return $state;
+}
+
 function um_age_seconds($iso): ?int {
     if ($iso === null || $iso === '') return null;
     $ts = strtotime((string) $iso);
@@ -57,6 +72,7 @@ function um_fleet_age(array $nodes): array {
 function um_fleet_health(?SQLite3 $db): array {
     $empty = ['fleet' => ['nodes' => 0, 'ok' => 0, 'degraded' => 0, 'unknown' => 0],
               'nodes' => [], 'newest' => null, 'age' => null,
+              'stale_after' => UM_STALE_AFTER,
               'tz' => um_local_timezone(), 'clock12' => um_display_clock_12h()];
     if ($db === null) return $empty;
 
@@ -81,7 +97,6 @@ function um_fleet_health(?SQLite3 $db): array {
                Only a genuinely unrecognised value fails closed to unknown. */
             $state = in_array($state, ['watch', 'warn'], true) ? 'degraded' : 'unknown';
         }
-        $counts[$state]++;
 
         $payload = function (string $domain) use ($states, $node) {
             $raw = $states[$node['id']][$domain] ?? null;
@@ -100,7 +115,6 @@ function um_fleet_health(?SQLite3 $db): array {
         }
 
         $out = um_public_node($node);
-        $out['state'] = $state;
         $out['since'] = $overall['since'] ?? null;
         $out['updated_at'] = $overall['updated_at'] ?? null;
         /* P1 triage P2-6. The fleet banner says the DATA is old; this says
@@ -109,6 +123,16 @@ function um_fleet_health(?SQLite3 $db): array {
            answers is "how old is this verdict" - a node the daemon never
            managed to stamp has no age at all rather than an age of zero. */
         $out['age'] = um_age_seconds($out['updated_at']);
+        /* The downgrade happens HERE, once, so the summary line below counts
+           exactly what the cards show. It lived in NodeCard.vue for a day and
+           the two disagreed on Raven: "0 unknown" beside a card reading
+           "? Unknown". The stored verdict travels alongside as `stored_state`
+           so the card can still say WHICH kind of staleness it is looking at
+           without recomputing the rule. */
+        $out['stored_state'] = $state;
+        $state = um_effective_state($state, $out['age']);
+        $out['state'] = $state;
+        $counts[$state]++;
         $out['indicators'] = $indicators;
         $out['array_state'] = $array['state'] ?? null;
         $out['array_empty'] = $array['empty'] ?? null;
@@ -129,6 +153,7 @@ function um_fleet_health(?SQLite3 $db): array {
        carries as a wall clock (frontend/src/time.js). One field, not a
        formatted twin of every timestamp. */
     return ['fleet' => ['nodes' => count($nodes)] + $counts, 'nodes' => $nodes,
+            'stale_after' => UM_STALE_AFTER,
             'tz' => um_local_timezone(), 'clock12' => um_display_clock_12h()]
            + um_fleet_age($nodes);
 }

@@ -2,13 +2,18 @@
 import { inject } from 'vue'
 import StatusChip from './StatusChip.vue'
 import { localTime } from '../time.js'
-import { STALE_MS } from '../live.js'
 
 // Provided by App.vue from the endpoint payload. Rendered standalone (a test
 // harness, or a future embed) there is no provider, so undefined falls through
 // to time.js's UTC default rather than throwing.
 const tz = inject('um-tz', null)
 const clock12 = inject('um-clock12', false)
+// Seconds a node's own verdict may get before the pane stops believing it.
+// health.php owns the number and ships it as `stale_after`; nothing is
+// hardcoded here. With no provider (a standalone render) the card simply does
+// not claim staleness - it cannot know the threshold, and inventing one is how
+// a rule ends up with two answers.
+const staleAfter = inject('um-stale-after', null)
 
 defineProps({ node: { type: Object, required: true } })
 defineEmits(['open'])
@@ -62,23 +67,22 @@ function unreadText (unread) {
 // P1 triage P2-6. The fleet banner says the DATA is old; this says which
 // node's verdict is, and only a stored age can - when the daemon dies nothing
 // is written at all, so the row simply stops moving while still reading `ok`.
-// Server-computed (api/health.php), because a skewed browser clock must not
-// be able to grey a healthy fleet.
 //
-// Same threshold as the banner, imported rather than repeated: two copies of
-// "three minutes" would drift, and the whole point of this round of fixes is
-// that one word must not have two clocks behind it.
+// The DOWNGRADE itself is not decided here. It was, for a day, and the summary
+// line disagreed with the cards under it on Raven: "0 unknown" beside a card
+// reading "? Unknown", because health.php tallied the stored row while this
+// file greyed the chip. One rule in two languages gives two answers, which is
+// the very thing this round of work exists to stop. The chip now renders
+// whatever the server sent.
+//
+// What the card still owns is the WORDING - why the thing is grey, which a
+// chip cannot say on its own. `stored_state` arrives beside `state` so this
+// can tell "was ok, nobody has checked" from "was degraded and still is".
 function isStale (node) {
-  return node.age !== null && node.age !== undefined && node.age * 1000 > STALE_MS
-}
-
-// Asymmetric, and the asymmetry is the point. A stale `ok` is an assertion we
-// can no longer make, so it greys. A stale `degraded` is still true and still
-// the thing the operator needs to see, so it keeps its colour and gets marked
-// instead - greying it would throw the finding away to make a point about
-// freshness.
-function chipState (node) {
-  return isStale(node) && node.state === 'ok' ? 'unknown' : node.state
+  const limit = staleAfter && staleAfter.value !== undefined
+    ? staleAfter.value : staleAfter
+  if (limit === null || limit === undefined) return false
+  return node.age !== null && node.age !== undefined && node.age > limit
 }
 </script>
 
@@ -88,7 +92,7 @@ function chipState (node) {
        @keydown.space.prevent="$emit('open', node.id)">
     <div class="um-card-head">
       <strong>{{ node.name }}</strong>
-      <StatusChip :state="chipState(node)" />
+      <StatusChip :state="node.state" />
     </div>
 
     <div class="um-card-line">
@@ -131,7 +135,7 @@ function chipState (node) {
       <span v-if="node.state !== 'ok'">{{ node.state }} {{ held(node.since) }} · </span>
       <!-- The chip alone cannot say WHY it went grey, and "grey for no stated
            reason" is how an operator learns to ignore grey. -->
-      <span v-if="isStale(node)" class="um-unknown">{{ node.state === 'ok' ? 'no update' : 'stale' }},
+      <span v-if="isStale(node)" class="um-unknown">{{ node.stored_state === 'ok' ? 'no update' : 'stale' }},
         as of {{ localTime(node.updated_at, tz, clock12) }} · </span>
       <!-- fleet.js styled a never-seen node's cell as um-unknown - "we have
            not heard" gets the same distinct treatment here (fix round 1,

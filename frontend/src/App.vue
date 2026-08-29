@@ -1,7 +1,7 @@
 <script setup>
 import { computed, provide, ref } from 'vue'
 import { useEndpoint } from './api.js'
-import { useLive, STALE_MS } from './live.js'
+import { useLive } from './live.js'
 import { localTime } from './time.js'
 import Overview from './views/Overview.vue'
 import Disks from './views/Disks.vue'
@@ -46,10 +46,17 @@ const tz = computed(() => data.value?.tz ?? null)
 // Unraid's own Settings -> Date & Time clock preference, so the pane does not
 // show a 24-hour clock to an operator who set a 12-hour one.
 const clock12 = computed(() => data.value?.clock12 ?? false)
+// Seconds before a reading is too old to assert, decided by health.php and
+// shipped with the payload. Provided app-wide so the banner above and every
+// card below judge staleness by ONE number rather than each keeping a copy of
+// "three minutes" that can drift from the other.
+const staleAfter = computed(() => data.value?.stale_after ?? null)
 provide('um-tz', tz)
 provide('um-clock12', clock12)
+provide('um-stale-after', staleAfter)
 const newest = computed(() => localTime(data.value?.newest, tz.value, clock12.value))
-const dataStale = computed(() => age.value !== null && age.value * 1000 > STALE_MS)
+const dataStale = computed(() => age.value !== null && staleAfter.value !== null
+  && age.value > staleAfter.value)
 const stale = computed(() => unreachable.value || dataStale.value)
 
 function minutesOld (seconds) {

@@ -107,10 +107,17 @@ cycle cannot launder a pending warning away.
 
 **Stale good news greys; stale bad news stays.** When the daemon dies nothing
 is written at all, so a row simply stops moving while still reading `ok`. Each
-node therefore carries a server-computed `age`, and past the same threshold the
-fleet banner uses, a stale `ok` renders `unknown` while a stale `degraded`
-keeps its verdict and is marked stale — the finding is still true and still the
-thing worth seeing.
+node therefore carries a server-computed `age`, and past `stale_after` a stale
+`ok` resolves to `unknown` while a stale `degraded` keeps its verdict and is
+marked stale — the finding is still true and still the thing worth seeing.
+
+That resolution happens **once, in `health.php`**, so the fleet summary is a
+tally of the cards it ships. It lived in `NodeCard.vue` for a day and the two
+disagreed on hardware: `0 unknown` on the summary line beside a card reading
+`? Unknown`. The threshold travels with the payload as `stale_after` for the
+same reason — the banner and every card judge by one number rather than each
+keeping a copy that can drift. The card is given `stored_state` alongside so it
+can still word *why* something is grey without re-deciding *whether* it is.
 
 ## The seams that make it testable
 

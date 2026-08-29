@@ -54,6 +54,34 @@ function tick () {
   for (const cb of callbacks.keys()) kick(cb)
 }
 
+// A monitoring pane that is wrong when you look at it is worse than one that
+// is slow. Browsers throttle setInterval in background tabs and freeze it
+// outright in occluded ones, and with managerd dead there are no nchan nudges
+// either - so that 30s timer is the ONLY thing driving updates, and a window
+// sitting behind another one goes completely static. Observed on Raven
+// 2026-08-29: the daemon was down for minutes and the pane only caught up on
+// a manual F5.
+//
+// Both events, because they answer different questions. `visibilitychange`
+// fires for a hidden TAB; a window merely behind another one is still
+// `visible` by the spec, so only `focus` fires for it - and that is the case
+// that actually bit.
+// Long enough to collapse the pair a browser fires for one glance - they land
+// milliseconds apart - and short enough that genuinely looking away and back
+// still refetches. Not a rate limit; the 30s timer is that.
+const WAKE_DEBOUNCE_MS = 250
+let lastWake = 0
+
+function wake () {
+  if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
+  // Chrome fires both together when a tab is unhidden AND focused; two
+  // fetches for one glance is a doubled request rate on every tab switch.
+  const now = Date.now()
+  if (now - lastWake < WAKE_DEBOUNCE_MS) return
+  lastWake = now
+  tick()
+}
+
 function start () {
   if (started) return
   started = true
@@ -75,6 +103,13 @@ function start () {
   // its first data.
   setInterval(tick, FALLBACK_MS)
   setInterval(() => { stale.value = Date.now() - lastGood.value > STALE_MS }, 15000)
+  // Guarded: these harnesses render live.js with no DOM at all.
+  if (typeof document !== 'undefined' && document.addEventListener) {
+    document.addEventListener('visibilitychange', wake)
+  }
+  if (typeof window !== 'undefined' && window.addEventListener) {
+    window.addEventListener('focus', wake)
+  }
 }
 
 export function useLive (refresh) {

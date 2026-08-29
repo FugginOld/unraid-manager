@@ -68,6 +68,19 @@ function mountHeadless (setup) {
   return () => app.unmount()
 }
 
+// A window and a document with nothing but addEventListener. Installed here,
+// after the imports above, so defining `window` cannot change how Vue itself
+// decided to behave when it was loaded.
+const fakeListeners = { document: {}, window: {} }
+const fakeDocument = {
+  visibilityState: 'visible',
+  addEventListener: (ev, fn) => { (fakeListeners.document[ev] ||= []).push(fn) },
+}
+global.document = fakeDocument
+global.window = {
+  addEventListener: (ev, fn) => { (fakeListeners.window[ev] ||= []).push(fn) },
+}
+
 /* ── the first caller must fetch before any timer fires ──────────────────── */
 let callsA = 0
 useLive(async () => { callsA++ })
@@ -176,6 +189,62 @@ check('useEndpoint(name) returns the identical object on a second call',
   const failing = useLive(() => Promise.reject(new Error('endpoint down')))
   await new Promise(r => setTimeout(r, 0))
   check('a failed refresh does NOT clear the stale flag', failing.stale.value === true)
+}
+
+
+/* ── waking on focus ─────────────────────────────────────────────────────
+   A monitoring pane that is wrong when you look at it is worse than one that
+   is slow. Browsers throttle setInterval in background tabs and freeze it in
+   occluded ones, and with managerd dead there are no nchan nudges either - so
+   that 30s timer is the ONLY thing driving updates and an unfocused window
+   goes completely static. Observed on Raven 2026-08-29: the daemon was down
+   for minutes, the window was behind a terminal, and the pane only caught up
+   on a manual F5.
+
+   BOTH events, because they answer different questions. `visibilitychange`
+   fires for a hidden TAB; a window merely sitting behind another one is still
+   `visible` by the spec, so only `focus` fires for it - and that was the case
+   that actually bit. */
+{
+  /* Fires whatever is registered and nothing if nothing is. A missing
+     listener must fail the checks below by NAME, not by throwing on
+     `undefined[0]` - a stack trace says a test broke, where a named failure
+     says the code did. */
+  const fire = (bag, ev) => { for (const fn of bag[ev] || []) fn() }
+
+  check('live.js listens for focus, not only for tab visibility',
+        (fakeListeners.window.focus || []).length === 1
+        && (fakeListeners.document.visibilitychange || []).length === 1)
+
+  let wakeCalls = 0
+  useLive(async () => { wakeCalls++ })
+  await flush()
+  const before = wakeCalls
+
+  fakeDocument.visibilityState = 'hidden'
+  fire(fakeListeners.document, 'visibilitychange')
+  await flush()
+  check('a visibilitychange to HIDDEN does not fetch - nobody is looking',
+        wakeCalls === before)
+
+  fakeDocument.visibilityState = 'visible'
+  fire(fakeListeners.window, 'focus')
+  await flush()
+  check('focusing the window refetches at once rather than waiting on the 30s timer',
+        wakeCalls === before + 1)
+
+  /* Chrome fires focus and visibilitychange together when a tab is both
+     unhidden and focused. Two fetches for one glance is a doubled request
+     rate on every tab switch, for nothing. */
+  // Past the debounce window, so this scenario starts from a clean slate
+  // rather than being suppressed by the wake just above it.
+  await new Promise(r => setTimeout(r, 300))
+  const beforePair = wakeCalls
+  fire(fakeListeners.window, 'focus')
+  fire(fakeListeners.document, 'visibilitychange')
+  await flush()
+  check('two wake events arriving together cause one fetch, not two',
+        wakeCalls === beforePair + 1)
 }
 
 console.log(fails === 0 ? 'live_singleton: all pass' : `live_singleton: ${fails} FAILED`)

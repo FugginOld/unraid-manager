@@ -324,5 +324,22 @@ check('the stored verdict still travels, so the card can say what went stale',
 check('a node with no age at all is never downgraded by staleness',
       um_tally($mixed)['unknown'] === 1);
 
+/* A downgraded verdict needs a downgraded clock. `since` describes when the
+   STORED state began, which is a different fact from when we stopped being
+   able to assert it - so a node that had been happily ok for twelve minutes
+   and went stale four minutes ago rendered "unknown for 12m". Observed on
+   Raven 2026-08-29, 12:37: the duration and the word beside it referred to
+   two different states. Resolved in the same place as the state itself, or it
+   is the count mismatch all over again. */
+check('a downgraded node dates its new verdict from its last real one',
+      $mixById['g2']['since'] === $mixById['g2']['updated_at']);
+check('...and that is NOT the stored since it arrived with',
+      $mixById['g2']['since'] !== $fresh);
+check('a node that was not downgraded keeps the since it came with',
+      $mixById['g1']['since'] === $fresh);
+check('a stale degraded node keeps its since too - its verdict never changed',
+      $mixById['g3']['since'] === $fresh);
+
+
 echo $fails === 0 ? "health: all pass\n" : "health: $fails FAILED\n";
 exit($fails === 0 ? 0 : 1);

@@ -130,7 +130,16 @@ function um_fleet_health(?SQLite3 $db): array {
            so the card can still say WHICH kind of staleness it is looking at
            without recomputing the rule. */
         $out['stored_state'] = $state;
-        $state = um_effective_state($state, $out['age']);
+        $effective = um_effective_state($state, $out['age']);
+        if ($effective !== $state) {
+            /* A downgraded verdict needs a downgraded clock. `since` says when
+               the STORED state began, which is a different fact from when we
+               stopped being able to assert it: a node ok for twelve minutes
+               and stale for four rendered "unknown for 12m" (Raven, 12:37).
+               Its new verdict dates from the last real one we had. */
+            $out['since'] = $out['updated_at'];
+        }
+        $state = $effective;
         $out['state'] = $state;
         $counts[$state]++;
         $out['indicators'] = $indicators;

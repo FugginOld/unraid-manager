@@ -82,8 +82,8 @@ curl -fsSL https://raw.githubusercontent.com/FugginOld/unraid-manager/$S/source/
 1. **Settings → Utilities → Unraid-Manager.** Set the database path to a
    directory on a pool — `/mnt/cache/unraid-manager`, or `/mnt/user/appdata/...`
    on a box with array disks. It will refuse anything under `/boot`. Save.
-2. Press **Start** in the Daemon section, or run
-   `rc.unraid-manager start`.
+2. Press **Start** in the Daemon section, or run the rc script by its full
+   path (it is not on `PATH` — see below).
 3. **Enroll a node.** On the peer, create a key — read scope is enough:
    ```bash
    unraid-api apikey --create
@@ -98,9 +98,15 @@ it differs per box.
 
 ## The rc script
 
+**It is not on `PATH`.** `rc.unraid-manager` alone gives
+`bash: rc.unraid-manager: command not found` — it lives under the plugin's own
+directory, so every invocation needs the full path:
+
 ```
-rc.unraid-manager start | stop | restart | status | prune | prune-vacuum
+/usr/local/emhttp/plugins/unraid-manager/scripts/rc.unraid-manager   start | stop | restart | status | prune | prune-vacuum
 ```
+
+Worth an alias if you are iterating: `alias um=/usr/local/emhttp/plugins/unraid-manager/scripts/rc.unraid-manager`.
 
 `status` exits 0 running, 3 stopped. `prune` runs retention through the daemon
 so there is exactly one writer, and is skipped entirely when it is down. Cron
@@ -130,8 +136,8 @@ correct. `grep nchan /var/log/unraid-manager/managerd.log` says which path was
 taken.
 
 **The daemon will not start.** Almost always the database path. Run
-`rc.unraid-manager start` from a shell — the refusal names the reason, which the
-UI also surfaces:
+`/usr/local/emhttp/plugins/unraid-manager/scripts/rc.unraid-manager start`
+from a shell — the refusal names the reason, which the UI also surfaces:
 
 ```
 unraid-manager: db_path '/boot/...' is on the USB flash device.

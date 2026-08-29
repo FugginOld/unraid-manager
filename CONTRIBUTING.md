@@ -73,6 +73,13 @@ plugin that needs one is a plugin that breaks on someone else's server.
 - **A guarded no-op must still succeed.** `[ -x foo ] && foo stop` exits 1 when
   the file is absent, which aborted every fresh install until it was found on a
   real box.
+- **Verify on hardware as you go, never in a batch.** No test may require a
+  live box, but plenty of defects still need one - the P1 exit trial found four
+  on a branch that was green and reviewed. When a change wants hardware to
+  confirm it, STOP and ask for a verification pass before building on top of
+  it. Do not let unverified work stack up because each piece was reviewed;
+  "reviewed" is not "verified", and a batch of four makes it impossible to say
+  which one broke the box. Green CI is a floor, not a signoff.
 
 ## Secrets
 

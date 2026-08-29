@@ -198,11 +198,25 @@ class TestCollect(unittest.TestCase):
         self.assertIn(('cpu.percent', 12.4), result.samples)
 
     def test_array_ok_emits_capacity_samples(self):
+        """P1 triage F-f: this asserted key PRESENCE, not value.
+
+        Both samples could have carried the wrong number, or each other's, and
+        it stayed green - and these are the rows the disk-errors indicator and
+        the capacity history are computed from. The values come from the same
+        capture parse_array is checked against, so pinning them costs nothing.
+        """
         data = context.fixture_json('seed/array_populated.json')['data']
         result = collector.collect(lambda *a, **k: data, self.NODE, collector.DOMAINS['array'])
         metrics = dict(result.samples)
-        self.assertIn('array.bytes_used', metrics)
-        self.assertIn('array.bytes_total', metrics)
+        capacity = collector.parse_array(data)['capacity']
+        self.assertEqual(capacity['used'], metrics['array.bytes_used'])
+        self.assertEqual(capacity['total'], metrics['array.bytes_total'])
+        self.assertNotEqual(metrics['array.bytes_used'], metrics['array.bytes_total'],
+                            'a fixture where the two are equal could not tell them apart')
+        # errors_total is what health.evaluate_disk_errors windows over; without
+        # it that indicator is permanently "not enough history yet".
+        self.assertEqual(collector.parse_array(data)['errors_total'],
+                         metrics['array.errors_total'])
 
     def test_empty_array_collects_ok(self):
         data = context.fixture_json('seed/array_empty.json')['data']

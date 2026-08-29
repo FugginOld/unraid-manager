@@ -200,5 +200,37 @@ check('the dispatch reports whether the database was readable',
       str_contains($src, "'db' => \$db !== null"));
 check('no key can leave', !str_contains(json_encode($out), 'SENTINEL-NOT-FOR-EXPORT'));
 
+/* P1 triage F-e: the sentinel above only ever lived in the `nodes` row, so
+   redaction was proven for exactly one source. This endpoint also decodes and
+   re-emits `info`, `array` and `notifications` payloads out of node_state, and
+   it selects named fields from each - an allow-list, the same shape as
+   um_public_node's. Nothing proved that. A payload carrying a field we do NOT
+   select must not ride along, whatever a future peer decides to put in one:
+   these come off another box over the network, and neither their shape nor
+   their contents are ours to assume. */
+$leaky = new SQLite3(':memory:');
+$leaky->enableExceptions(true);
+$leaky->exec('CREATE TABLE nodes(id TEXT PRIMARY KEY, name TEXT, address TEXT, port INTEGER,
+              tier INTEGER, enabled INTEGER, added_at TEXT, last_seen TEXT, api_key TEXT)');
+$leaky->exec('CREATE TABLE node_state(node_id TEXT, domain TEXT, status TEXT, error TEXT,
+              fetched_at TEXT, payload TEXT, PRIMARY KEY(node_id, domain))');
+$leaky->exec('CREATE TABLE node_health(node_id TEXT, indicator TEXT, state TEXT, value REAL,
+              basis TEXT, pending_state TEXT, pending_count INTEGER, since TEXT,
+              updated_at TEXT, PRIMARY KEY(node_id, indicator))');
+$leaky->exec("INSERT INTO nodes VALUES('n1','Leaky','10.0.0.20',80,0,1,'x','y',NULL)");
+foreach (['info', 'array', 'notifications'] as $domain) {
+    $payload = json_encode(['hostname' => 'Leaky', 'unraid' => '7.3.2',
+                            'state' => 'STARTED', 'capacity' => ['used' => 1, 'total' => 2],
+                            'unread' => ['alert' => 0],
+                            /* Not selected by health.php, and must not travel. */
+                            'api_key' => 'SENTINEL-PAYLOAD-NOT-FOR-EXPORT',
+                            'serial' => 'SENTINEL-PAYLOAD-NOT-FOR-EXPORT']);
+    $leaky->exec("INSERT INTO node_state VALUES('n1','$domain','ok',NULL,'2026-08-27T10:00:00Z','$payload')");
+}
+check('a field the endpoint does not select cannot ride along in a payload',
+      !str_contains(json_encode(um_fleet_health($leaky)), 'SENTINEL-PAYLOAD-NOT-FOR-EXPORT'));
+check('...while the fields it DOES select still arrive',
+      str_contains(json_encode(um_fleet_health($leaky)), '7.3.2'));
+
 echo $fails === 0 ? "health: all pass\n" : "health: $fails FAILED\n";
 exit($fails === 0 ? 0 : 1);

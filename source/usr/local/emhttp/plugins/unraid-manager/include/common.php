@@ -395,13 +395,32 @@ function um_readonly(SQLite3 $db): SQLite3 {
 }
 
 function um_query(SQLite3 $db, string $sql, array $params = []): array {
-    /* SQLite3 has no fetchAll. One helper beats four hand-rolled while loops. */
-    $stmt = $db->prepare($sql);
+    /* SQLite3 has no fetchAll. One helper beats four hand-rolled while loops.
+     *
+     * The handle has enableExceptions(true), so prepare() THROWS on a missing
+     * table rather than returning false - the `=== false` guards below were
+     * dead, and an endpoint answered a PHP fatal (an HTML 500 where the pane
+     * expects JSON) instead of an empty list. Reachable in the window where
+     * migrate() has dropped a derived table and not yet rebuilt it, and after
+     * any future schema change that lands before the daemon restarts.
+     *
+     * Caught, not prevented: the caller's own "no rows" path is the honest
+     * answer, and it is the one every caller already handles. The guards stay
+     * because a future caller may hand this a handle without exceptions. */
+    try {
+        $stmt = $db->prepare($sql);
+    } catch (Throwable $e) {
+        return [];
+    }
     if ($stmt === false) return [];
     foreach ($params as $name => $value) {
         $stmt->bindValue($name, $value, is_int($value) ? SQLITE3_INTEGER : SQLITE3_TEXT);
     }
-    $result = $stmt->execute();
+    try {
+        $result = $stmt->execute();
+    } catch (Throwable $e) {
+        return [];
+    }
     if ($result === false) return [];
     $rows = [];
     while ($row = $result->fetchArray(SQLITE3_ASSOC)) $rows[] = $row;

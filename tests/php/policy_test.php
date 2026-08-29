@@ -118,8 +118,14 @@ check('absent: no introspection query',
 /* Globbed, not named: a read path added after this pin (health.php was
    exactly the kind of code that broke on php-fpm) must be covered without
    anyone remembering to list it here. */
+/* `?: []` degraded to "nothing to check": moving api/ would have silently
+   narrowed this pin to common.php alone and left it green. A pin that passes
+   by finding no files is not a pin (P1 triage F-d). */
+$pdoFiles = glob($plugin . '/api/*.php') ?: [];
+check('the PDO pin actually sees the endpoints it claims to cover',
+      count($pdoFiles) >= 4);
 $pdoLeak = false;
-foreach (array_merge([$plugin . '/include/common.php'], glob($plugin . '/api/*.php') ?: []) as $pdoFile) {
+foreach (array_merge([$plugin . '/include/common.php'], $pdoFiles) as $pdoFile) {
     if (str_contains(php_code_only(src($pdoFile)), 'new PDO(')) $pdoLeak = true;
 }
 check('absent: no PDO instantiation survives in the php layer', !$pdoLeak);

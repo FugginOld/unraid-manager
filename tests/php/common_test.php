@@ -173,6 +173,22 @@ try { $rodb->exec("INSERT INTO t VALUES(1)"); } catch (Throwable $e) { $threw = 
 check('a write through a read-only handle throws', $threw);
 check('a read through a read-only handle still works',
       um_query($rodb, 'SELECT COUNT(*) AS n FROM t')[0]['n'] === 0);
+
+/* P1 triage F-c. The handle has enableExceptions(true), so prepare() THROWS on
+   a missing table - the `=== false` guards were dead code and an endpoint
+   answered a PHP fatal, an HTML 500 where the pane is promised JSON. Reachable
+   in the window where migrate() has dropped a derived table and not yet
+   rebuilt it. "No rows" is the honest answer and the one every caller already
+   handles. */
+$missing = null;
+try {
+    $missing = um_query($rodb, 'SELECT * FROM a_table_that_does_not_exist');
+} catch (Throwable $e) {
+    $missing = 'threw: ' . get_class($e);
+}
+check('a query against a missing table answers no rows, not a fatal', $missing === []);
+check('a syntactically broken query answers no rows too',
+      um_query($rodb, 'SELECT FROM WHERE') === []);
 check('the read layer uses sqlite3, not pdo',
       str_contains($common_src, 'function um_db(): ?SQLite3')
       && str_contains($common_src, 'new SQLite3('));

@@ -68,6 +68,26 @@ class TestConfigurableThresholds(unittest.TestCase):
     def test_up_and_down_are_parameters(self):
         self.assertEqual([OK, OK, WARN], run(OK, [WARN] * 3, up=3))
 
+    def test_down_is_a_parameter_too(self):
+        """P1 triage F-a: `down` was covered by NO test despite the name above.
+
+        Replacing `else down` in apply_hysteresis with a literal 5 left the
+        whole suite green, so the five-cycle clear - the asymmetry that is the
+        entire point of this module, and the half the operator watched by hand
+        during the P1 exit trial's step 7 - was pinned only by the constant
+        happening to equal the default.
+        """
+        self.assertEqual([WARN, WARN, OK], run(WARN, [OK] * 3, down=3))
+
+    def test_clearing_is_slower_than_escalating_by_default(self):
+        # The asymmetry itself, stated as a property rather than as two
+        # constants: an operator should learn quickly that something turned
+        # bad, and green should not come back until it is convincingly fine.
+        self.assertGreater(health.CLEAR_AFTER, health.ESCALATE_AFTER)
+        escalate = run(OK, [WARN] * 6)
+        clear = run(WARN, [OK] * 6)
+        self.assertLess(escalate.index(WARN), clear.index(OK))
+
 
 class TestNodeOverall(unittest.TestCase):
     def ind(self, **states):
@@ -78,6 +98,18 @@ class TestNodeOverall(unittest.TestCase):
 
     def test_every_domain_unreadable_is_unknown(self):
         self.assertEqual('unknown', health.node_overall(['unknown', 'unknown'], {}))
+
+    def test_an_unrecognised_status_is_not_read_as_healthy(self):
+        """P1 triage F-b: this returned 'ok'.
+
+        The PHP sibling um_rollup (api/nodes.php) normalises anything it does
+        not recognise to 'unknown' and says so; this half let it fall through
+        every branch to 'ok'. So the two implementations of one rule disagreed
+        in the worst direction - a status neither of them understands read as
+        HEALTHY on the Python side.
+        """
+        self.assertEqual('degraded', health.node_overall(['ok', 'stale'], {}))
+        self.assertEqual('unknown', health.node_overall(['stale'], {}))
 
     def test_no_domains_at_all_is_unknown(self):
         self.assertEqual('unknown', health.node_overall([], {}))

@@ -222,7 +222,15 @@ def node_overall(domain_statuses, indicators):
     reachability can produce `unknown`; an indicator that could not be judged
     is excluded rather than counted as bad.
     """
-    statuses = list(domain_statuses)
+    # An unrecognised status becomes `unknown`, exactly as the PHP sibling
+    # um_rollup does (api/nodes.php). Without this the two halves disagree in
+    # the worst possible direction: node_overall(['ok', 'stale'], {}) returned
+    # 'ok', so a status this module does not understand read as HEALTHY.
+    # Unreachable today - collector emits only these three, and store.py has a
+    # CHECK constraint - but "fails open on a value we do not recognise" is not
+    # a property to leave sitting in the one function that decides the chip.
+    statuses = [s if s in ('ok', 'error', UNKNOWN) else UNKNOWN
+                for s in domain_statuses]
     if not statuses or all(s == UNKNOWN for s in statuses):
         return 'unknown'
     if any(s in (UNKNOWN, 'error') for s in statuses):

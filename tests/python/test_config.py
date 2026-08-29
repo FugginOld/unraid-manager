@@ -106,19 +106,27 @@ class TestManagerCfg(unittest.TestCase):
         self.assertEqual(80, cfg['capacity_watch'])
         self.assertEqual(90, cfg['capacity_high_water'])
 
-    def test_a_fahrenheit_box_inherits_no_temperature_at_all(self):
-        # We cannot tell whether Unraid stores hot/max in F on such a box or
-        # always in C with `unit` governing display only, and no test here can
-        # find out - it is a fact about dynamix, not about this code.
-        # Converting a Celsius 45 would give 7 C and warn on every disk
-        # forever; reading a Fahrenheit 95 as Celsius would give a threshold
-        # that can never fire. Declining is the only choice safe under both.
+    def test_a_fahrenheit_box_inherits_the_celsius_the_file_stores(self):
+        # Settled on hardware 2026-08-29, on a box switched to F for the
+        # purpose (docs/verification/tier0-coverage.md): dynamix.cfg stores
+        # hot/max in CELSIUS whatever the display unit says. Switching the unit
+        # to F left hot="45" untouched while the page rendered it as 113, and
+        # typing 122 into Disk Settings wrote hot="50" - it converts on write
+        # as well as on read. The file is unit-invariant; `unit` governs
+        # rendering only.
+        #
+        # So there is nothing to convert and nothing to decline. Converting was
+        # the trap the old guard was built around: it would have read this 45
+        # as Fahrenheit and inherited 7 C, warning on every disk forever.
         dyn = self._dynamix('[display]\nunit="F"\nhot="45"\nmax="55"\n'
                             'warning="70"\ncritical="90"\n')
         cfg = config.read_manager_cfg(os.path.join(self.dir, 'nope.cfg'), dynamix_path=dyn)
-        self.assertEqual(50, cfg['temp_warn'], 'our own default, not 45 and not 7')
-        self.assertEqual(60, cfg['temp_crit'])
-        # Capacity is a percentage: unaffected by the display unit.
+        # 45/55 rather than 50/60 on purpose: our own defaults are 50/60, so a
+        # fixture using them could not tell "inherited" from "fell back".
+        self.assertEqual(45, cfg['temp_warn'], 'the stored Celsius, not 7 and not our 50')
+        self.assertEqual(55, cfg['temp_crit'])
+        # Capacity is a percentage: unaffected by the display unit, before and
+        # after this change.
         self.assertEqual(70, cfg['capacity_watch'])
         self.assertEqual(90, cfg['capacity_high_water'])
 

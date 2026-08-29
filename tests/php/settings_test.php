@@ -135,10 +135,11 @@ max=\"500\"
 check('an out-of-range value from another plugins file is dropped, as python drops it',
       um_unraid_thresholds(UM_THRESHOLDS, $dynDir . '/wild.cfg') === []);
 
-/* A Fahrenheit box inherits NO temperature, matching daemon/config.py: we
-   cannot tell whether Unraid stores hot/max in F there or always in C, both
-   guesses are unsafe in opposite directions, and declining is safe under
-   either. Capacity is a percentage and is unaffected. */
+/* A Fahrenheit box inherits normally, matching daemon/config.py. Settled on
+   hardware 2026-08-29 (docs/verification/tier0-coverage.md): dynamix.cfg
+   stores hot/max in CELSIUS whatever `unit` says - switching a box to F left
+   hot="45" untouched while the page rendered 113, and typing 122 wrote
+   hot="50". `unit` governs rendering only, so there is nothing to convert. */
 file_put_contents($dynDir . '/f.cfg', "[display]
 unit=\"F\"
 hot=\"45\"
@@ -147,9 +148,11 @@ warning=\"70\"
 critical=\"90\"
 ");
 $f = um_unraid_thresholds(UM_THRESHOLDS, $dynDir . '/f.cfg');
-check('a fahrenheit box inherits no temperature threshold at all',
-      !array_key_exists('temp_warn', $f) && !array_key_exists('temp_crit', $f));
-check('but it still inherits the capacity percentages',
+/* 45/55 rather than 50/60 on purpose: our own defaults ARE 50/60, so a fixture
+   using them could not tell an inherited value from a fallback. */
+check('a fahrenheit box inherits the celsius the file stores',
+      $f['temp_warn'] === 45 && $f['temp_crit'] === 55);
+check('and it still inherits the capacity percentages',
       $f['capacity_watch'] === 70 && $f['capacity_high_water'] === 90);
 
 /* Fails closed on a key with no bound, the way python raises KeyError for the

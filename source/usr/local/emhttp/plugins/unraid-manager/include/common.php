@@ -274,19 +274,17 @@ const UM_UNRAID_THRESHOLD_KEYS = [
 function um_unraid_thresholds(array $bounds,
                               string $path = '/boot/config/plugins/dynamix/dynamix.cfg'): array {
     $display = um_read_ini_file($path)['display'] ?? [];
-    /* A box whose display unit is Fahrenheit inherits NO temperature at all -
-       see daemon/config.py for the reasoning: we cannot tell whether Unraid
-       stores hot/max in F on such a box or always in C, both guesses are unsafe
-       in opposite directions, and declining is the only choice that is safe
-       under either. Capacity is a percentage and is unaffected. */
-    $fahrenheit = strtoupper(substr((string) ($display['unit'] ?? ''), 0, 1)) === 'F';
+    /* `unit` is NOT read, deliberately - see daemon/config.py for the whole
+       story. dynamix.cfg stores hot/max in Celsius whatever the display unit
+       says, verified on hardware 2026-08-29 on a box switched to Fahrenheit
+       for the purpose. There is nothing to convert, and the guard that used to
+       decline to inherit on an F box is gone with it. */
     $out = [];
     foreach (UM_UNRAID_THRESHOLD_KEYS as $theirs => $ours) {
         $raw = $display[$theirs] ?? null;
         /* A value that is not a plain integer is dropped, leaving our own
            default in place, rather than trusted. */
         if ($raw === null || $raw === '' || !ctype_digit((string) $raw)) continue;
-        if ($fahrenheit && in_array($ours, ['temp_warn', 'temp_crit'], true)) continue;
         $value = (int) $raw;
         /* Fails CLOSED on a key with no bound: a required $bounds argument stops
            a caller forgetting the parameter, not a maintainer forgetting an

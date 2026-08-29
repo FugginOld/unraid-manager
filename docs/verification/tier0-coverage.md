@@ -152,21 +152,31 @@ seed fixtures were found to encode shapes the API cannot return.
 - Raven's `disks` 504 root cause (box-side issue, not a blocker).
 
 - **Does `dynamix.cfg` store `hot`/`max` in the display unit, or always in
-  Celsius?** Open, and it changes behaviour. `[display]` carries both `unit`
-  (`"C"` on Raven) and the disk temperature thresholds `hot`/`max`, and P1's
-  F-8 inherits those as ours. If a box set to Fahrenheit stores `hot="113"`,
-  the value needs converting; if it stores `hot="45"` and `unit` only governs
-  how the webGUI *renders* it, converting would produce 7 °C and warn on every
-  disk forever.
+  Celsius?** **ANSWERED 2026-08-29 on Raven: always Celsius.** `unit` governs
+  rendering only, and the file is unit-invariant.
 
-  Neither answer can be reached from this repo, and the two failures point in
-  opposite directions, so `config.py` and `common.php` both **decline to
-  inherit temperature thresholds at all** when `unit` is `F`, falling back to
-  our own 50/60. Capacity is a percentage and is unaffected.
+  Two observations, because one is not enough — a box configured in C and then
+  flipped to F only proves the *read* path, and a real Fahrenheit operator
+  types their thresholds while in F:
 
-  Thirty seconds to settle for anyone with a box set to Fahrenheit: set
-  Settings → Disk Settings' temperature fields, then read
-  `/boot/config/plugins/dynamix/dynamix.cfg`'s `[display] hot=`. If the stored
-  number matches what the page displayed, dynamix stores the display unit and
-  the conversion should go back in; if it is the Celsius equivalent, the
-  current behaviour is right and only the comments need updating.
+  | Step | Observed |
+  | --- | --- |
+  | Baseline | `unit="C"`, `hot="45"`, `max="55"` |
+  | Switch unit to F, change nothing | `hot="45"`, `max="55"` — **unchanged**, while Disk Settings rendered them as 113/131 |
+  | Still in F, type 122 / 140 and apply | `hot="50"`, `max="60"` — **converted on write** |
+
+  So dynamix converts in both directions at the display layer and stores
+  Celsius unconditionally. Inheriting needs no conversion. Converting was the
+  real trap: it would have read a stored `45` as Fahrenheit and inherited 7 °C,
+  warning on every disk forever.
+
+  `config.py` and `common.php` used to **decline to inherit any temperature**
+  when `unit` was `F`, falling back to our own 50/60 — safe under either
+  answer, which is why it was written that way while the answer was unknown.
+  That guard is now removed in both: an F box inherits exactly like a C box.
+  Capacity is a percentage and was never affected.
+
+  Note the range check at `THRESHOLD_BOUNDS` only half-covers the wrong answer:
+  a Fahrenheit `113` would have been rejected as out of band `(20, 99)`, but a
+  box set to `95 °F` would have stored `95`, passed the check, and been
+  inherited as a 95 °C threshold that can never fire.

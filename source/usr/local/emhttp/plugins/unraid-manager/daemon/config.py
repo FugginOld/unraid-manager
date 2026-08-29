@@ -98,15 +98,11 @@ def read_unraid_thresholds(path=DYNAMIX_CFG):
     written by another plugin's settings page and is not ours to trust blindly.
     """
     out = {}
-    fahrenheit = False
     for section, key, value in _pairs(path):
         # [display] only, which is the section common.php reads. Without this
         # a `warning=` in any other section of a file neither half owns would
         # diverge the two readers by file order.
         if section != 'display':
-            continue
-        if key == 'unit':
-            fahrenheit = value.strip().upper().startswith('F')
             continue
         ours = UNRAID_THRESHOLD_KEYS.get(key)
         if ours is None:
@@ -117,21 +113,19 @@ def read_unraid_thresholds(path=DYNAMIX_CFG):
             continue
         out[ours] = number
 
-    # A box whose display unit is Fahrenheit inherits NO temperature at all.
+    # `unit` is NOT read, deliberately. dynamix.cfg stores hot/max in Celsius
+    # whatever the display unit says - verified on hardware 2026-08-29 on a box
+    # switched to Fahrenheit for the purpose (docs/verification/tier0-coverage.md):
+    # switching the unit left hot="45" untouched while the page rendered 113,
+    # and typing 122 into Disk Settings wrote hot="50". It converts on write as
+    # well as on read, so the file is unit-invariant and `unit` governs
+    # rendering only.
     #
-    # We do not know whether Unraid stores hot/max in Fahrenheit on such a box
-    # or always in Celsius with `unit` governing display only, and no test here
-    # can find out - it is a fact about dynamix, not about this code. Both
-    # guesses are unsafe, and in opposite directions: converting a Celsius 45
-    # gives 7 C and warns on every disk forever, while reading a Fahrenheit 95
-    # as Celsius gives a threshold that can never fire. Declining to inherit is
-    # the only choice that is safe under BOTH, because it falls back to our own
-    # 50/60 either way. Capacity is a percentage and is unaffected.
-    #
-    # Revisit with an operator who has a box set to F and can say which it is.
-    if fahrenheit:
-        out.pop('temp_warn', None)
-        out.pop('temp_crit', None)
+    # This replaced a guard that declined to inherit ANY temperature on an F
+    # box, written when we could not tell which way dynamix stored them and
+    # both guesses were unsafe in opposite directions. Converting was the real
+    # trap: it would have read a stored 45 as Fahrenheit and inherited 7 C,
+    # warning on every disk forever. There is nothing to convert.
 
     # Range-checked LAST, after any conversion. Another plugin's file is not
     # ours to trust: a value outside the band leaves our own default in place

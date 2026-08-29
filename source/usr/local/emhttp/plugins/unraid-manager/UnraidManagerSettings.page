@@ -31,8 +31,11 @@ $um_csrf = $var['csrf_token'] ?? '';
     </tr>
     <tr>
       <td>Capacity watch / warning (%):</td>
-      <td><input type="number" id="um-capacity-watch" min="10" max="98" value="">
-        <input type="number" id="um-capacity-high-water" min="50" max="99" value="">
+      <td><span class="um-pair"><input type="number" id="um-capacity-watch"
+          min="10" max="98" value="" aria-label="Capacity watch percent"
+          ><span class="um-pair-sep">/</span><input type="number"
+          id="um-capacity-high-water" min="50" max="99" value=""
+          aria-label="Capacity warning percent"></span>
         <span class="um-hint">Percent of the array used before a node is watched, then
           flagged. <strong>Leave blank to follow this server&rsquo;s
           Settings &rarr; Disk Settings</strong>, which is where you have already said
@@ -40,8 +43,11 @@ $um_csrf = $var['csrf_token'] ?? '';
     </tr>
     <tr>
       <td>Disk temperature warm / critical (&deg;C):</td>
-      <td><input type="number" id="um-temp-warn" min="20" max="99" value="">
-        <input type="number" id="um-temp-crit" min="20" max="99" value="">
+      <td><span class="um-pair"><input type="number" id="um-temp-warn"
+          min="20" max="99" value="" aria-label="Disk temperature warm, degrees C"
+          ><span class="um-pair-sep">/</span><input type="number"
+          id="um-temp-crit" min="20" max="99" value=""
+          aria-label="Disk temperature critical, degrees C"></span>
         <span class="um-hint">Degrees C for the hottest disk on a node, array-assigned
           or not. Critical must be above warm. <strong>Leave blank to follow this
           server&rsquo;s Settings &rarr; Disk Settings.</strong> These apply to every

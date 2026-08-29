@@ -73,6 +73,15 @@ plugin that needs one is a plugin that breaks on someone else's server.
 - **A guarded no-op must still succeed.** `[ -x foo ] && foo stop` exits 1 when
   the file is absent, which aborted every fresh install until it was found on a
   real box.
+- **Anything that rewrites a file must write LF.** `.gitattributes` sets
+  `* text=auto eol=lf` because a `.page`, an rc script or a daemon carrying
+  CRLF is a syntax error on the box, not a cosmetic difference. Git normalises
+  on commit, so CI stays green and the shipped package is fine — which is
+  exactly what makes this easy to miss. The local suites read the WORKING
+  copy, so a tool that writes CRLF breaks them alone: a script rewrote
+  `UnraidManagerSettings.page` and `pages_test.php` immediately failed on
+  `header is terminated` while CI passed. In Python that means
+  `open(path, 'w', newline='')`, never the default.
 - **Verify on hardware as you go, never in a batch.** No test may require a
   live box, but plenty of defects still need one - the P1 exit trial found four
   on a branch that was green and reviewed. When a change wants hardware to

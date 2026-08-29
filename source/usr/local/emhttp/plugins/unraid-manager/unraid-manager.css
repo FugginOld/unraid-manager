@@ -17,3 +17,19 @@
 .um-capbar   { display: inline-block; width: 8em; height: .8em; background: rgba(128,128,128,.3); vertical-align: middle; }
 .um-capbar > span { display: block; height: 100%; background: currentColor; }
 .um-daemon   { margin: .5em 0 1em 0; }
+
+/* Two thresholds that only mean something as a pair - watch/warning,
+   warm/critical - have to READ as a pair. Unraid stretches every settings
+   input to the full cell (1607px of it on a 1875px window), so left alone the
+   second box stacks under the first, and an empty full-width box with only a
+   bottom border in this theme is indistinguishable from a divider rule. The
+   operator concluded, reasonably, that there was no way to set a critical
+   value at all (Raven, 2026-08-29).
+
+   Scoped to these six inputs and no further: the host's full-width convention
+   is right for a path or a single number, and this file does not get to hold
+   an opinion about the rest of the shell. The id qualifier is load-bearing -
+   the stretch IS Unraid's own rule, so ours has to out-specify it. */
+.um-pair          { white-space: nowrap; }
+.um-pair-sep      { opacity: .6; margin: 0 .4em; }
+#um-settings .um-pair input[type="number"] { width: 5em; }

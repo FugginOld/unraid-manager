@@ -79,5 +79,50 @@ check('fleet page declares an icon-font Code, or it never renders',
       (bool) preg_match('/^Code="[0-9a-f]{4}"/m', $fleet));
 check('fleet page has no submitting form', !preg_match('/<form[^>]*\baction=/i', $fleet));
 
+$css = (string) @file_get_contents($base . '/unraid-manager.css');
+check('the plugin stylesheet exists', $css !== '');
+
+/* Paired thresholds must read as a pair. Verified wrong on Raven 2026-08-29:
+   Unraid stretches every settings input to the full cell (measured 1607px on
+   a 1875px window, all six of them), so `capacity_high_water` and `temp_crit`
+   rendered as full-width boxes stacked UNDER their partners. Empty, and with
+   only a bottom border in this theme, each looked exactly like a divider rule
+   rather than a field - so the operator reasonably concluded there was no way
+   to set a critical value at all.
+
+   Reachability was never the problem; legibility was. These checks pin the
+   structure that makes them legible, not the words around it. */
+$pairIds = [['um-capacity-watch', 'um-capacity-high-water'],
+            ['um-temp-warn', 'um-temp-crit']];
+foreach ($pairIds as $pair) {
+    [$low, $high] = $pair;
+    /* Both inside ONE um-pair span, in order, with nothing but the separator
+       between them - a check that fails if either drifts out of the wrapper,
+       which is what makes the CSS rule below apply to it. */
+    $re = '/<span class="um-pair">\s*<input[^>]*id="' . preg_quote($low, '/')
+        . '"[^>]*>.*?<input[^>]*id="' . preg_quote($high, '/') . '"[^>]*>\s*<\/span>/s';
+    check("$low and $high are wrapped together as one pair",
+          (bool) preg_match($re, $settings));
+    /* The pair is meaningless unread: two bare boxes do not say which is
+       which. A separator between them is the whole affordance. */
+    $between = [];
+    preg_match('/id="' . preg_quote($low, '/') . '".*?id="' . preg_quote($high, '/') . '"/s',
+               $settings, $between);
+    check("...with a visible separator between $low and $high",
+          isset($between[0]) && str_contains($between[0], 'um-pair-sep'));
+}
+
+/* The rule that undoes the host's full-width stretch. It must out-specify it,
+   so an id-qualified selector, not a bare class - the previous behaviour WAS
+   the browser applying Unraid's rule because ours did not exist. */
+/* Not merely "a width is set" - the host already sets one, and it is the
+   problem. It has to be a SMALL one, in a text-relative unit, or two boxes
+   still cannot share a line. A five-digit threshold does not need 1607px. */
+check('the stylesheet constrains paired inputs so both fit on one line',
+      (bool) preg_match('/#um-settings\s+\.um-pair\s+input[^{]*\{[^}]*width\s*:\s*([\d.]+)\s*(em|ch|rem)\s*;/', $css, $w)
+      && (float) $w[1] <= 10);
+check('...and does not let the pair wrap mid-way',
+      (bool) preg_match('/\.um-pair\b[^{]*\{[^}]*white-space\s*:\s*nowrap/', $css));
+
 echo $fails === 0 ? "pages: all pass\n" : "pages: $fails FAILED\n";
 exit($fails === 0 ? 0 : 1);

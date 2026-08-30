@@ -98,9 +98,26 @@ list itself was unasserted. Pinned, with the fixture now reporting a differing
 - **`plugin remove` deletes `/boot/config/plugins/<name>.plg`.** Writing the plg
   before the remove means the install has no file to read. A HOWTO ordering note,
   not a code defect.
-- **Restart survival of `pending_count`** was not exercised: the counters were at
-  zero at the moment a restart was available, and by the time they were non-zero
-  the reload fix had made a restart unnecessary. Worth one deliberate pass.
+- ~~**Restart survival of `pending_count`** was not exercised~~ — **CLOSED
+  2026-08-30 on Raven, driving Golem.** `scripts/check_pending_restart.py`,
+  verbatim: `count=2` at `18:31:12` while mid-clear, the same `count=2` read out
+  of the database with `rc stop` done and nothing running, then `count=4` on the
+  first poll after `rc start` — it continued rather than restarting at 1, and did
+  not skip the remaining samples to reach `ok`.
+
+  Two things the box corrected about the check itself, both worth keeping:
+
+  1. **An outage cannot drive this ladder.** Stopping a node's API makes every
+     indicator propose `unknown`, and `apply_hysteresis` returns immediately on
+     `unknown` carrying the count unchanged — so the obvious lever produces
+     `pending_count=0` and proves nothing. A threshold change does drive it.
+  2. **A high threshold has to be a PAIR.** Writing `temp_warn=99 temp_crit=99`
+     left the evaluator using 50/60: `read_manager_cfg` refuses `temp_crit <=
+     temp_warn` and restores its own constants, which sit *below* Golem's
+     hottest disk. Two runs timed out at `count=0` against a guard doing its
+     job. 90/95 works. The `basis` string is what says which — it names the
+     threshold actually used, and reading it is the difference between "the
+     ladder is broken" and "the config never took our number".
 - **`disks.stale` was never non-empty.** `node_state` survived the upgrade, so
   both nodes had retained payloads throughout and neither the first-poll-failure
   path nor the 504 path was exercised live.

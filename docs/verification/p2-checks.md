@@ -66,6 +66,35 @@ on every row.
 No frontend change was needed — `App.vue` and `NodeCard.vue` already consume the
 shipped `stale_after` rather than a copy, which is what that design was for.
 
+## 2026-08-30 — P2-5, sort/filter on the fleet card grid (`2a09b1e`)
+
+Ordering was `health.php`'s `ORDER BY name` and nothing else. Closed by making
+the worst state lead unconditionally, with the summary counts as the state
+filter and one search box.
+
+Deployed as a full rebuild rather than a file patch: the bundle under `ui/` is
+gitignored and built at package time, so a UI change cannot be curled onto the
+box the way `managerd.py` and `health.php` were. HOWTO's remove-then-write-plg
+order applies.
+
+Confirmed on the box by observation (Joe, 19:57) — the grid ordered Golem ahead
+of Raven with no control touched, the count buttons isolated and cleared, the
+zero count was not pressable, state and search together produced the "No node
+matches this filter" hint rather than "No nodes enrolled", and the escape hatch
+restored the grid and emptied the search. Two nodes cannot show off the ordering;
+the checks that would actually break at that size are the filter combination and
+the empty-result hint, and both are visible at two.
+
+Off the box: 19 unit checks in `tests/js/fleet.mjs`, 15 through real clicks in
+`tests/js/interact.mjs`, and 5/5 mutants killed — rank order, an unknown state
+sorting first, filter OR-instead-of-AND, an in-place sort, and a case-sensitive
+search.
+
+`interact.mjs` needed `Document` and `ShadowRoot` added to its happy-dom globals:
+the search box is the first `v-model` in a tested view, and `vModelText`'s
+`beforeUpdate` reads them at every patch. Missing, it surfaces as a bare
+`ReferenceError` from inside Vue and reads as a broken component.
+
 ## Notes for whoever runs the next one
 
 - **An API outage cannot drive the hysteresis ladder.** Every indicator proposes

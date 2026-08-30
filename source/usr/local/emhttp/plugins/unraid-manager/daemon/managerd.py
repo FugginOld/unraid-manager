@@ -275,11 +275,24 @@ class Manager(object):
             row = self.conn.execute('SELECT * FROM nodes WHERE id=?', (node_id,)).fetchone()
         return dict(row) if row else None
 
+    # Every threshold health.evaluate() reads. A key missing here is silently
+    # dropped on the way in and the evaluator falls back to its own constant -
+    # which is how capacity_watch shipped dead for a whole branch: config.py
+    # resolved it from Unraid's Disk Settings, the pure function honoured it,
+    # and nothing in between passed it along.
+    HEALTH_THRESHOLDS = ('capacity_high_water', 'capacity_watch', 'temp_warn',
+                         'temp_crit', 'error_window_min')
+
+    # Derived, not restated. capacity_watch was in HEALTH_THRESHOLDS and not in
+    # this tuple, so saving it on the settings page stayed inert until a daemon
+    # restart - the same silent shape as the bug reload() itself exists to fix,
+    # and a second hand-maintained copy of one list is how it happened. There is
+    # no threshold the evaluator reads that an operator may not change.
+    #
     # db_path is deliberately absent: repointing the database under a running
     # daemon would mean reopening the connection every worker already holds.
     # A db_path change still needs a restart, and the settings page says so.
-    RELOADABLE = ('poll_fast', 'poll_slow') + (
-        'capacity_high_water', 'temp_warn', 'temp_crit', 'error_window_min')
+    RELOADABLE = ('poll_fast', 'poll_slow') + HEALTH_THRESHOLDS
 
     def reload(self):
         """Re-read both flash files: the registry, and the tunables.
@@ -392,14 +405,6 @@ class Manager(object):
         if changed or any(result.status == 'ok' for result in results):
             self._publish({'node_id': node_id, 'domains': changed, 'ts': stamp})
         return changed
-
-    # Every threshold health.evaluate() reads. A key missing here is silently
-    # dropped on the way in and the evaluator falls back to its own constant -
-    # which is how capacity_watch shipped dead for a whole branch: config.py
-    # resolved it from Unraid's Disk Settings, the pure function honoured it,
-    # and nothing in between passed it along.
-    HEALTH_THRESHOLDS = ('capacity_high_water', 'capacity_watch', 'temp_warn',
-                         'temp_crit', 'error_window_min')
 
     # How many slow-lane intervals a retained disk inventory may be behind
     # before thermal stops believing it. Three rather than one: a single missed

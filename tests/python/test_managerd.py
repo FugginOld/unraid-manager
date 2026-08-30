@@ -492,6 +492,28 @@ class TestReloadRereadsSettings(ManagerCase):
         m.reload()
         self.assertEqual(38, m.cfg['temp_warn'])
 
+    def test_every_health_threshold_is_reloadable(self):
+        """RELOADABLE and HEALTH_THRESHOLDS are two lists of the same thing.
+
+        `capacity_watch` was in the evaluator's list and not the reloadable one,
+        so saving it on the settings page stayed inert until a daemon restart -
+        this class's own bug, one layer up, and invisible for the same reason:
+        the page reports success and the flash file is correct.
+
+        Asserted as a set relation because that is what actually has to hold. A
+        test naming capacity_watch would go green on the fix and say nothing
+        about the next key added to one list and not the other.
+        """
+        self.assertEqual(set(), set(managerd.Manager.HEALTH_THRESHOLDS)
+                         - set(managerd.Manager.RELOADABLE))
+
+        m = self.manager()
+        for key in managerd.Manager.HEALTH_THRESHOLDS:
+            self.cfg[key] = m.cfg[key] + 1
+        m.reload()
+        for key in managerd.Manager.HEALTH_THRESHOLDS:
+            self.assertEqual(self.cfg[key], m.cfg[key], key)
+
     def test_a_changed_poll_interval_reaches_the_scheduler(self):
         m = self.manager()
         self.assertEqual(30, m.scheduler.poll_fast)

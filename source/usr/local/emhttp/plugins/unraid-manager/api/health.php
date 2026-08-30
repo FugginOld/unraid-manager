@@ -20,16 +20,39 @@ function um_health_rows(SQLite3 $db): array {
    grey a healthy fleet, nor hide a dead one behind a fresh-looking age. */
 /* How old a node's own verdict may get before the pane stops believing it.
    ONE definition, shipped to the client as `stale_after` so the banner and the
-   cards cannot drift apart - and so no browser has to hardcode a copy. */
-const UM_STALE_AFTER = 180;
+   cards cannot drift apart - and so no browser has to hardcode a copy.
+
+   Derived from the poll interval, because 180 seconds as a constant was only
+   ever right for the default 30s poll. poll_fast is an operator setting bounded
+   at UM_POLL_MAX (86400), so a fleet polled hourly was ALWAYS past the
+   threshold: every healthy node greyed permanently, and the banner reported a
+   manager that had stopped answering while it answered exactly as configured.
+
+   Three intervals, matching the daemon's own two staleness rules -
+   UNKNOWN_AFTER and INVENTORY_STALE_AFTER are both 3 - but never below the 180
+   the pane already used. The floor is what stops the other end being wrong: at
+   a 5-second poll, three intervals would call a node stale after 15 seconds and
+   one slow answer would grey a healthy fleet. */
+const UM_STALE_FLOOR = 180;
+const UM_STALE_INTERVALS = 3;
+const UM_POLL_FAST_DEFAULT = 30;
+
+function um_stale_after(): int {
+    $cfg = um_read_ini_file(um_manager_cfg())[''] ?? [];
+    $fast = (int) ($cfg['poll_fast'] ?? 0);
+    /* Absent or unusable means a P0-era file, not a zero-second poll. Below the
+       floor the multiplier cannot matter anyway, so one branch covers both. */
+    if ($fast < 1) $fast = UM_POLL_FAST_DEFAULT;
+    return max(UM_STALE_FLOOR, UM_STALE_INTERVALS * $fast);
+}
 
 /* A verdict too old to assert, resolved to what the operator should see.
    Asymmetric, deliberately: a stale `ok` is a claim we can no longer make, so
    it becomes `unknown`; a stale `degraded` is still true and still the thing
    worth seeing, so it keeps its verdict and the card marks it instead.
    Greying a finding away to make a point about freshness loses the finding. */
-function um_effective_state(string $state, ?int $age): string {
-    if ($state === 'ok' && $age !== null && $age > UM_STALE_AFTER) return 'unknown';
+function um_effective_state(string $state, ?int $age, int $staleAfter): string {
+    if ($state === 'ok' && $age !== null && $age > $staleAfter) return 'unknown';
     return $state;
 }
 
@@ -70,9 +93,14 @@ function um_fleet_age(array $nodes): array {
 }
 
 function um_fleet_health(?SQLite3 $db): array {
+    /* Read once per request and carried from here: the downgrade rule, the
+       summary counts and the number the client is told must all be the same
+       threshold, and re-reading the flash file per node would invite them to
+       differ mid-response as well as costing a read per card. */
+    $staleAfter = um_stale_after();
     $empty = ['fleet' => ['nodes' => 0, 'ok' => 0, 'degraded' => 0, 'unknown' => 0],
               'nodes' => [], 'newest' => null, 'age' => null,
-              'stale_after' => UM_STALE_AFTER,
+              'stale_after' => $staleAfter,
               'tz' => um_local_timezone(), 'clock12' => um_display_clock_12h()];
     if ($db === null) return $empty;
 
@@ -130,7 +158,7 @@ function um_fleet_health(?SQLite3 $db): array {
            so the card can still say WHICH kind of staleness it is looking at
            without recomputing the rule. */
         $out['stored_state'] = $state;
-        $effective = um_effective_state($state, $out['age']);
+        $effective = um_effective_state($state, $out['age'], $staleAfter);
         if ($effective !== $state) {
             /* A downgraded verdict needs a downgraded clock. `since` says when
                the STORED state began, which is a different fact from when we
@@ -162,7 +190,7 @@ function um_fleet_health(?SQLite3 $db): array {
        carries as a wall clock (frontend/src/time.js). One field, not a
        formatted twin of every timestamp. */
     return ['fleet' => ['nodes' => count($nodes)] + $counts, 'nodes' => $nodes,
-            'stale_after' => UM_STALE_AFTER,
+            'stale_after' => $staleAfter,
             'tz' => um_local_timezone(), 'clock12' => um_display_clock_12h()]
            + um_fleet_age($nodes);
 }

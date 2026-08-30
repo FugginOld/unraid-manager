@@ -105,7 +105,7 @@ check('a null db answers empty rather than fataling',
       um_fleet_health(null) === ['fleet' => ['nodes' => 0, 'ok' => 0, 'degraded' => 0,
                                              'unknown' => 0], 'nodes' => [],
                                  'newest' => null, 'age' => null,
-                                 'stale_after' => UM_STALE_AFTER,
+                                 'stale_after' => um_stale_after(),
                                  'tz' => um_local_timezone(),
                                  'clock12' => um_display_clock_12h()]);
 
@@ -339,6 +339,46 @@ check('a node that was not downgraded keeps the since it came with',
       $mixById['g1']['since'] === $fresh);
 check('a stale degraded node keeps its since too - its verdict never changed',
       $mixById['g3']['since'] === $fresh);
+
+/* ── the stale threshold follows the poll interval ────────────────────────── */
+/* 180 seconds was a constant while poll_fast is an operator setting bounded at
+   UM_POLL_MAX (86400). A fleet polled hourly is therefore ALWAYS older than the
+   threshold: every healthy node greys, permanently, and the banner says the
+   manager has stopped answering while it is answering exactly as configured.
+   Nothing in the daemon is wrong in that state, which is what makes it hard to
+   read from the pane. */
+$sdir = sys_get_temp_dir() . '/um_stalecfg_' . getmypid();
+@mkdir($sdir, 0700, true);
+um_set_cfg_dir($sdir);
+
+file_put_contents($sdir . '/manager.cfg', "db_path=/mnt/user/appdata/x\npoll_fast=30\n");
+check('the default poll interval keeps the 180s threshold exactly',
+      um_stale_after() === 180);
+
+file_put_contents($sdir . '/manager.cfg', "db_path=/mnt/user/appdata/x\npoll_fast=3600\n");
+check('an hourly poll scales the threshold past its floor',
+      um_stale_after() === 10800);
+check('...so a node one poll old is still believed at that interval',
+      um_effective_state('ok', 3600, um_stale_after()) === 'ok');
+
+/* The floor is not "3 intervals" - at a 5s poll that would call a node stale
+   after 15 seconds, and one slow answer would grey a fleet that is fine. */
+file_put_contents($sdir . '/manager.cfg', "db_path=/mnt/user/appdata/x\npoll_fast=5\n");
+check('a fast poll does not drop below the 180s floor', um_stale_after() === 180);
+
+/* A cfg with no poll_fast at all is a P0-era file, not a zero-second poll. */
+file_put_contents($sdir . '/manager.cfg', "db_path=/mnt/user/appdata/x\n");
+check('a cfg without poll_fast falls back to the default, not to zero',
+      um_stale_after() === 180);
+
+@unlink($sdir . '/manager.cfg');
+@rmdir($sdir);
+um_set_cfg_dir(UM_CFG_DIR_DEFAULT);
+
+check('a verdict older than the threshold is still downgraded',
+      um_effective_state('ok', 181, 180) === 'unknown');
+check('a stale degraded verdict still keeps its finding',
+      um_effective_state('degraded', 100000, 180) === 'degraded');
 
 
 echo $fails === 0 ? "health: all pass\n" : "health: $fails FAILED\n";

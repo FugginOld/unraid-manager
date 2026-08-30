@@ -118,9 +118,37 @@ list itself was unasserted. Pinned, with the fixture now reporting a differing
      job. 90/95 works. The `basis` string is what says which — it names the
      threshold actually used, and reading it is the difference between "the
      ladder is broken" and "the config never took our number".
-- **`disks.stale` was never non-empty.** `node_state` survived the upgrade, so
-  both nodes had retained payloads throughout and neither the first-poll-failure
-  path nor the 504 path was exercised live.
+- ~~**`disks.stale` was never non-empty.**~~ — **CLOSED 2026-08-30 on Raven.**
+  `scripts/check_disks_stale.py` enrols one throwaway node at `127.0.0.1:1` and
+  reads the list back through `um_fleet_disks()` itself. Both branches render:
+  never-polled gives `no disks poll recorded yet` with `fetched_at: null`, and
+  the failed first poll gives `URLError: <urlopen error [Errno 111] Connection
+  refused>` with the payload still NULL. The probe left the list on removal.
+
+  **The 504 path proved itself in the same output, unprompted.** Both real nodes
+  were already in `stale` when the probe arrived:
+
+  ```
+  Golem  status unknown  fetched_at 2026-08-30T18:41:33Z
+         HTTP 504 Gateway Time-out from nginx - the query took longer than the server allows
+  Raven  status unknown  fetched_at 2026-08-30T18:41:23Z   (same error)
+  ```
+
+  A read of `node_state` at 18:52 had shown both `disks` rows `ok` with payloads
+  of 5405 and 2884 bytes; the ~18:51 slow poll 504'd, and `upsert_state` kept the
+  18:41 payload and its `fetched_at` while status went `unknown`. That is the
+  retention contract behaving exactly as api/disks.php's header describes, on
+  live data, with no lever at all — and it is the answer to "neither path was
+  exercised": both were, within five minutes of each other.
+
+  Two facts fall out of it, neither of them about this milestone:
+
+  - **A 504 reads `unknown`, not `error`** — worth pairing with the platform fact
+    that a stopped API reads `error`. Neither of the two commonest disk-lane
+    failures is the status a reader would guess.
+  - **The `Query.disks` 504 is no longer Raven-specific.** tier0-coverage.md
+    finding 2 records Golem answering in 15.4s; Golem now 504s too. Amended
+    there.
 
 ## What this milestone demonstrated
 

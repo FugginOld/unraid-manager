@@ -46,7 +46,7 @@ Also available at Tier 0, unplanned: GraphQL **subscriptions** over WS (`arraySu
 22 data disks + 1 parity (`numErrors: 0`, DISK_OK), 250 TB used / 268 TB, 39 shares, 5 pools across xfs/btrfs/zfs — the plan §17.7 stress case, live.
 
 - `capacity.kilobytes` is **truthful on a populated array** — Raven's zeros are the legitimate empty-array reading, not an API bug. All-zero kilobytes + zero used slots = empty array.
-- `Query.disks` **works** here: 15.4s for 37 disks. The hard 504 is Raven-specific (investigate that box's stuck device eventually), but 15s+ confirms the slow-lane design — never in the 30s hot path.
+- `Query.disks` **works** here: 15.4s for 37 disks. The hard 504 is Raven-specific (investigate that box's stuck device eventually), but 15s+ confirms the slow-lane design — never in the 30s hot path. **Amended 2026-08-30: no longer Raven-specific.** Golem 504s too, and intermittently on both — a `node_state` read at 18:52 had `disks` `ok` on both nodes with fresh payloads, and the ~18:51 slow poll on each answered `HTTP 504 Gateway Time-out from nginx`. So the slow lane is not "one sick box"; it is a lane that fails on a healthy fleet often enough to be the normal case, which is what the retained-payload contract in api/disks.php is for. Observed via `scripts/check_disks_stale.py`.
 - Multi-device pool pattern confirmed at scale: `cache_movies/2/3`, `cache_tv/2/3/4`, `medianucbackup/2` — non-primary members carry null `fsType/fsSize/fsFree`. ZFS pool (`medianucbackup`) reports fs sizes like the others; still no profile/redundancy field on any of them.
 
 ## Wire-shape facts (verified live 2026-08-26, both boxes — these correct the P0 plan)

@@ -34,10 +34,16 @@ const frontendDir = path.resolve(here, '..', '..', 'frontend')
 const { Window } = await import(
   pathToFileURL(path.join(frontendDir, 'node_modules', 'happy-dom', 'lib', 'index.js')).href)
 const win = new Window({ url: 'http://localhost/' })
+// Document and ShadowRoot joined the list for Overview.vue's search box: it is
+// the first v-model in a tested view, and vModelText's beforeUpdate hook reads
+// `rootNode instanceof Document` at every patch. Missing, that is a bare
+// ReferenceError from inside Vue's own directive - which reads as the component
+// being broken rather than the harness being short a global.
 for (const key of ['window', 'document', 'navigator', 'location', 'history',
                    'Node', 'Element', 'HTMLElement', 'SVGElement', 'Event',
                    'CustomEvent', 'MouseEvent', 'getComputedStyle',
-                   'requestAnimationFrame', 'cancelAnimationFrame']) {
+                   'requestAnimationFrame', 'cancelAnimationFrame',
+                   'Document', 'ShadowRoot']) {
   // defineProperty, not assignment: Node defines some of these (navigator) on
   // globalThis as getter-only, and a plain `=` throws rather than shadowing.
   Object.defineProperty(globalThis, key,
@@ -261,6 +267,90 @@ try {
     check('the toggle collapses again rather than being one-way',
           v.rows().length === 1 && !v.text().includes('6.1.74'))
 
+    v.unmount()
+  }
+
+  /* ── Overview.vue: the fleet grid's controls (P2-5) ─────────────────────── */
+  /* fleet.mjs pins the rules; these pin that the SUMMARY LINE is wired to them.
+     The counts are the filter, so a button labelled "1 degraded" that isolates
+     something else - or a count that stops matching what the grid shows - is
+     the exact defect the shared `$counts[$state]` in health.php exists to
+     prevent, reintroduced on the client. */
+  {
+    const node = (name, state) => ({ id: name, name, state, indicators: {},
+                                     age: 1, since: null, updated_at: null })
+    const FLEET_NODES = [node('Atlas', 'ok'), node('Zeus', 'degraded'),
+                         node('Boreas', 'unknown'), node('Aegis', 'ok')]
+    const HEALTH = { data: {
+      fleet: { nodes: 4, ok: 2, degraded: 1, unknown: 1 }, nodes: FLEET_NODES,
+      stale_after: 180, tz: 'UTC', clock12: false } }
+
+    const Overview = await dom.load(path.join(viewsDir, 'Overview.vue'))
+    const v = await mount(Overview, HEALTH)
+    // Card identity by heading text, not by index: a check reading "the first
+    // card" keeps passing when the order it was written to prove is gone.
+    const cards = () => [...v.host.querySelectorAll('.um-grid > *')]
+      .map(el => FLEET_NODES.map(n => n.name).find(name => el.textContent.includes(name)))
+      .filter(Boolean)
+
+    check('the worst node leads the grid without anyone asking it to',
+          cards()[0] === 'Zeus')
+    check('...and the rest follow by rank, name breaking ties',
+          cards().join() === 'Zeus,Boreas,Aegis,Atlas')
+
+    const count = (label) => v.byText('button', label)
+    check('every count is a button the operator can press',
+          !!count('2 ok') && !!count('1 degraded') && !!count('1 unknown'))
+
+    await v.click(count('1 degraded'))
+    check('clicking a count isolates exactly that state', cards().join() === 'Zeus')
+    check('the pressed count says so to a screen reader',
+          count('1 degraded').getAttribute('aria-pressed') === 'true')
+
+    await v.click(count('1 degraded'))
+    check('clicking the active count again clears it rather than sticking',
+          cards().length === 4)
+    check('...and it stops reporting itself as pressed',
+          count('1 degraded').getAttribute('aria-pressed') === 'false')
+
+    /* Two filters that each keep something, and whose intersection is empty:
+       an OR would show three cards here and read as a working filter. */
+    await v.click(count('2 ok'))
+    const search = v.host.querySelector('input[type="search"]')
+    search.value = 'zeus'
+    search.dispatchEvent(new win.Event('input', { bubbles: true }))
+    await nextTick()
+    check('the state and the search combine with AND', cards().length === 0)
+    check('an empty result says the filter is hiding them, not that the fleet is empty',
+          v.text().includes('No node matches') && !v.text().includes('No nodes enrolled'))
+
+    await v.click(v.byText('button', 'Show all 4'))
+    check('the escape hatch restores every node', cards().length === 4)
+    check('...and empties the search box too, not just the state',
+          v.host.querySelector('input[type="search"]').value === '')
+
+    search.value = 'AE'
+    search.dispatchEvent(new win.Event('input', { bubbles: true }))
+    await nextTick()
+    check('the search is case-insensitive on the name', cards().join() === 'Aegis')
+
+    v.unmount()
+  }
+
+  /* A count of zero must not be pressable - it would blank the grid with no
+     way to tell that from a broken pane. The ACTIVE one stays pressable
+     whatever it reads, or a refresh that empties it strands the operator. */
+  {
+    const HEALTH = { data: {
+      fleet: { nodes: 1, ok: 1, degraded: 0, unknown: 0 },
+      nodes: [{ id: 'a', name: 'Alone', state: 'ok', indicators: {}, age: 1 }],
+      stale_after: 180, tz: 'UTC', clock12: false } }
+    const Overview = await dom.load(path.join(viewsDir, 'Overview.vue'))
+    const v = await mount(Overview, HEALTH)
+    check('a zero count is not pressable',
+          v.byText('button', '0 degraded').disabled === true)
+    check('a non-zero count still is',
+          v.byText('button', '1 ok').disabled === false)
     v.unmount()
   }
 } finally {

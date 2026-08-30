@@ -40,8 +40,12 @@ from config import read_manager_cfg  # noqa: E402
 DB = os.path.join(read_manager_cfg(CFG)['db_path'], 'manager.db')
 NODE = os.environ.get('UM_NODE', 'Raven')
 INDICATOR = 'thermal'
+# A PAIR, never two copies of one number: read_manager_cfg refuses temp_crit
+# <= temp_warn and restores 50/60, which is below a real disk and leaves
+# thermal exactly where it was. 99/99 cost two runs on Golem (52 C, 18:26).
 COLD = '25'          # below any plausible disk temperature -> WATCH
-HOT = '99'           # above any plausible disk temperature -> OK
+HOT_WARN = '90'      # above any plausible disk temperature -> OK
+HOT_CRIT = '95'
 DEADLINE = 180       # seconds to wait for any single expected transition
 
 
@@ -61,11 +65,17 @@ def daemon(cmd, **kw):
 
 
 def row():
-    """(state, pending_state, pending_count, updated_at) for the tracked row."""
+    """(state, pending_state, pending_count, updated_at, basis) for the row.
+
+    `basis` is carried purely so a stuck run says WHY: it names the threshold
+    the evaluator actually used, which is the one thing that separates "the
+    ladder is broken" from "the config layer never took our number".
+    """
     conn = sqlite3.connect('file:' + DB + '?mode=ro', uri=True)
     try:
         got = conn.execute(
-            'SELECT h.state, coalesce(h.pending_state, "-"), h.pending_count, h.updated_at '
+            'SELECT h.state, coalesce(h.pending_state, "-"), h.pending_count, h.updated_at, '
+            'h.basis '
             'FROM node_health h JOIN nodes n ON n.id = h.node_id '
             'WHERE n.name = ? AND h.indicator = ?', (NODE, INDICATOR)).fetchone()
     finally:
@@ -77,6 +87,7 @@ def show(label):
     got = row()
     say('  %-22s state=%-8s pending=%-8s count=%s  (%s)'
         % (label, got[0], got[1], got[2], got[3]))
+    say('  %-22s %s' % ('', got[4]))
     return got
 
 
@@ -166,16 +177,16 @@ try:
 
     say('')
     say('-- 1. temp_warn=%s: thermal should propose WATCH and escalate' % COLD)
-    set_thresholds(COLD, HOT)
+    set_thresholds(COLD, HOT_CRIT)
     wait_for(lambda r: r[0] == 'watch', 'thermal to reach watch')
     show('escalated')
 
     say('')
-    say('-- 2. temp_warn=%s: thermal proposes OK, the 5-sample clear counts' % HOT)
+    say('-- 2. temp_warn=%s: thermal proposes OK, the 5-sample clear counts' % HOT_WARN)
     # Not "restore the original": a box whose disks sit legitimately above its
     # own threshold - Golem, 2026-08-30 - goes on proposing WATCH and the clear
     # never starts. An explicit high threshold proposes OK from any real box.
-    set_thresholds(HOT, HOT)
+    set_thresholds(HOT_WARN, HOT_CRIT)
     banked = wait_for(lambda r: r[2] >= 2 and r[1] == 'ok',
                       'pending_count to reach 2',
                       overshot=lambda r: r[0] == 'ok')

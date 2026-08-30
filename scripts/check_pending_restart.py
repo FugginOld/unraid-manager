@@ -28,10 +28,16 @@ import subprocess
 import sys
 import time
 
-DB = '/mnt/cache/unraid-manager/manager.db'
+PLUGIN = '/usr/local/emhttp/plugins/unraid-manager'
 SOCK = '/var/run/unraid-manager/managerd.sock'
 CFG = '/boot/config/plugins/unraid-manager/manager.cfg'
-RC = '/usr/local/emhttp/plugins/unraid-manager/scripts/rc.unraid-manager'
+RC = PLUGIN + '/scripts/rc.unraid-manager'
+
+# db_path is an operator setting, not a constant - ask the daemon's own reader
+# where the database is rather than guessing a pool name.
+sys.path.insert(0, PLUGIN + '/daemon')
+from config import read_manager_cfg  # noqa: E402
+DB = os.path.join(read_manager_cfg(CFG)['db_path'], 'manager.db')
 NODE = os.environ.get('UM_NODE', 'Raven')
 INDICATOR = 'thermal'
 COLD = '25'          # below any plausible disk temperature -> WATCH

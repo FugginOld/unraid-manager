@@ -11,7 +11,7 @@ propose a real state, which is what actually drives the ladder.
 
   1. temp_warn below the hottest disk  -> thermal proposes WATCH
      two polls (ESCALATE_AFTER=2)      -> state=watch, count back to 0
-  2. temp_warn restored                -> thermal proposes OK
+  2. temp_warn above the hottest disk  -> thermal proposes OK
      polls until pending_count == 2    -> mid-clear, 3 short of CLEAR_AFTER=5
   3. rc stop, read the DB with nothing running, rc start
   4. the count must be intact across the stop, and must CONTINUE across the
@@ -41,6 +41,7 @@ DB = os.path.join(read_manager_cfg(CFG)['db_path'], 'manager.db')
 NODE = os.environ.get('UM_NODE', 'Raven')
 INDICATOR = 'thermal'
 COLD = '25'          # below any plausible disk temperature -> WATCH
+HOT = '99'           # above any plausible disk temperature -> OK
 DEADLINE = 180       # seconds to wait for any single expected transition
 
 
@@ -103,16 +104,29 @@ def wait_for(predicate, what, overshot=None):
     sys.exit(2)
 
 
-def set_temp_warn(value):
-    """Rewrite temp_warn in manager.cfg and make the daemon re-read it."""
+def set_thresholds(warn, crit):
+    """Rewrite both temp thresholds in manager.cfg, then make the daemon re-read.
+
+    Both, always: evaluate_thermal checks crit BEFORE warn, so raising warn on
+    its own leaves an inherited crit free to propose WARN instead of the OK
+    this needs. A key the operator has never saved is absent from the file, so
+    a key that is not found is appended rather than silently dropped.
+    """
+    want = {'temp_warn': warn, 'temp_crit': crit}
     with open(CFG, encoding='utf-8', newline='') as fh:
         lines = fh.read().split('\n')
-    out = []
+    out, seen = [], set()
     for line in lines:
-        if line.startswith('temp_warn='):
-            out.append('temp_warn=' + value)
+        key = line.split('=', 1)[0]
+        if key in want:
+            out.append('%s=%s' % (key, want[key]))
+            seen.add(key)
         else:
             out.append(line)
+    for key in want:
+        if key not in seen:
+            out.insert(len(out) - 1 if out and out[-1] == '' else len(out),
+                       '%s=%s' % (key, want[key]))
     with open(CFG, 'w', encoding='utf-8', newline='') as fh:
         fh.write('\n'.join(out))
     say(daemon('reload')[:120])
@@ -152,13 +166,16 @@ try:
 
     say('')
     say('-- 1. temp_warn=%s: thermal should propose WATCH and escalate' % COLD)
-    set_temp_warn(COLD)
+    set_thresholds(COLD, HOT)
     wait_for(lambda r: r[0] == 'watch', 'thermal to reach watch')
     show('escalated')
 
     say('')
-    say('-- 2. temp_warn restored: the 5-sample clear starts counting')
-    set_temp_warn('')
+    say('-- 2. temp_warn=%s: thermal proposes OK, the 5-sample clear counts' % HOT)
+    # Not "restore the original": a box whose disks sit legitimately above its
+    # own threshold - Golem, 2026-08-30 - goes on proposing WATCH and the clear
+    # never starts. An explicit high threshold proposes OK from any real box.
+    set_thresholds(HOT, HOT)
     banked = wait_for(lambda r: r[2] >= 2 and r[1] == 'ok',
                       'pending_count to reach 2',
                       overshot=lambda r: r[0] == 'ok')

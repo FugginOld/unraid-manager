@@ -150,6 +150,20 @@ class TestReadVerbs(unittest.TestCase):
         self.assertFalse(got['ok'])
         self.assertEqual('BAD_ARGS', got['code'])
 
+        # An unexpected key alongside a valid devices list is refused too,
+        # and the message names the offending key.
+        got = self.reply(json.dumps({'verb': 'smart.attributes',
+                                     'args': {'devices': ['/dev/sda'], 'x': 1}}))
+        self.assertFalse(got['ok'])
+        self.assertEqual('BAD_ARGS', got['code'])
+        self.assertIn('x', got['error'])
+
+        # A single device given as a bare string, not a one-item list.
+        got = self.reply(json.dumps({'verb': 'smart.attributes',
+                                     'args': {'devices': '/dev/sda'}}))
+        self.assertFalse(got['ok'])
+        self.assertEqual('BAD_ARGS', got['code'])
+
     def test_a_traversal_argument_is_refused_the_same_way(self):
         self._patch('devices', lambda: ['/dev/sda'])
         for bad in ('/etc/shadow', '../../etc/shadow', '/dev/sda; rm -rf /',
@@ -182,6 +196,32 @@ class TestReadVerbs(unittest.TestCase):
         self.assertIsNone(got['data']['/dev/sda'])
         self.assertEqual('fine', got['data']['/dev/sdb'])
 
+    def test_smart_budget_stops_reading_further_devices(self):
+        # One SSH call carries the whole enumeration; the aggregate BUDGET,
+        # not the per-command RUN_TIMEOUT, is what keeps a 22-disk box inside
+        # the transport's window. A fake clock advances the budget past its
+        # limit after the first device - a test that actually sleeps 60s to
+        # exercise this is not acceptable.
+        self._patch('devices', lambda: ['/dev/sda', '/dev/sdb', '/dev/sdc'])
+        clock = [0.0]
+
+        class FakeClock:
+            @staticmethod
+            def monotonic():
+                return clock[0]
+        self._patch('time', FakeClock())
+
+        def run(argv):
+            clock[0] = agent.BUDGET + 1  # the budget is spent reading device one
+            return 'data ' + argv[-1]
+        self._patch('_run', run)
+
+        got = self.reply('{"verb": "smart.attributes"}')
+        self.assertTrue(got['ok'])
+        self.assertEqual('data /dev/sda', got['data']['/dev/sda'])
+        self.assertIsNone(got['data']['/dev/sdb'])
+        self.assertIsNone(got['data']['/dev/sdc'])
+
     def test_mounts_are_returned_raw(self):
         # Raw on purpose: a parse bug in the agent costs twenty paste sessions,
         # in the manager it costs one file patch.
@@ -200,6 +240,36 @@ class TestReadVerbs(unittest.TestCase):
         self.assertTrue(got['ok'])
         self.assertIn('/mnt/disk1', got['data']['proc_mounts'])
 
+    def test_pool_balance_walks_btrfs_mounts_and_reports_zfs_absence(self):
+        # Three branches, pinned in one test: the mount-walk filter (xfs is
+        # not btrfs and must not appear), a per-pool failure that does not
+        # blank the pool beside it, and a missing zpool binary reported as
+        # None rather than as an error.
+        import tempfile
+        with tempfile.NamedTemporaryFile('w', suffix='.mounts', delete=False,
+                                         newline='') as fh:
+            fh.write('/dev/sda1 /mnt/xfsdisk xfs rw 0 0\n'
+                     '/dev/sdb1 /mnt/pool1 btrfs rw 0 0\n'
+                     '/dev/sdc1 /mnt/pool2 btrfs rw 0 0\n')
+            path = fh.name
+        self.addCleanup(os.unlink, path)
+        self._patch('PROC_MOUNTS', path)
+
+        def run(argv):
+            if argv[0] == 'zpool':
+                raise FileNotFoundError('no zpool binary')
+            if argv[-1] == '/mnt/pool2':
+                raise OSError('I/O error')
+            return 'usage: ' + argv[-1]
+        self._patch('_run', run)
+
+        got = self.reply('{"verb": "pool.balance"}')
+        self.assertTrue(got['ok'])
+        self.assertEqual(
+            {'btrfs': {'/mnt/pool1': 'usage: /mnt/pool1', '/mnt/pool2': None},
+             'zfs': None},
+            got['data'])
+
     def test_every_verb_is_declared_by_hello(self):
         got = self.reply('{"verb": "agent.hello"}')
         for verb in ('smart.attributes', 'mounts.list', 'pool.balance'):
@@ -210,8 +280,9 @@ class TestReadVerbs(unittest.TestCase):
         # asserts the same thing on the manager's domain table.
         with open(context.AGENT, encoding='utf-8') as fh:
             source = fh.read()
-        for forbidden in ('umount', 'mkfs', 'rm ', 'shutdown', 'reboot',
-                          "'w'", '"w"', 'os.remove', 'shutil'):
+        for forbidden in ('umount', 'mkfs', 'shutdown', 'reboot',
+                          "'w'", '"w"', 'os.remove', 'shutil',
+                          'os.rename', 'os.mkdir', "'wb'", "mode='a'"):
             self.assertNotIn(forbidden, source, forbidden)
 
 

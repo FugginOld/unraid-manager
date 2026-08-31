@@ -89,6 +89,14 @@ plugin that needs one is a plugin that breaks on someone else's server.
   it. Do not let unverified work stack up because each piece was reviewed;
   "reviewed" is not "verified", and a batch of four makes it impossible to say
   which one broke the box. Green CI is a floor, not a signoff.
+- **Update the docs in the same commit as the change, never afterwards.** A doc
+  that describes a boundary the code has already moved is worse than no doc: it
+  is read as current and believed. Both of the ones found stale on 2026-08-30
+  had been wrong for a whole phase — README announcing P0 while P1 shipped, and
+  ARCHITECTURE ruling out rollups and hysteresis that were by then load-bearing.
+  Neither would have survived a day if the commit that moved the line had moved
+  the sentence with it. README, ARCHITECTURE, HOWTO and the verification logs
+  alike.
 
 ## Secrets
 

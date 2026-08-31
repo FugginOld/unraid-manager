@@ -4,8 +4,9 @@ One pane over every Unraid box on the network. Installs on one host — the
 **manager** — and polls the rest over Unraid's official GraphQL API. Peers need
 no plugin installed; a read-scoped API key is the whole integration.
 
-Status: **P0 complete**, verified on two live boxes. Read-only against every
-peer. Not yet released — install from source, see [HOWTO.md](HOWTO.md).
+Status: **P1 complete** — the pane ships fleet health, the disk table and the
+drift matrix, verified on two live boxes. Still read-only against every peer.
+Not yet released — install from source, see [HOWTO.md](HOWTO.md).
 
 ## Docs
 
@@ -17,6 +18,7 @@ peer. Not yet released — install from source, see [HOWTO.md](HOWTO.md).
 | [docs/review-policy.md](docs/review-policy.md) | Evidenced protected paths. **Read before reviewing anything.** |
 | [docs/verification/tier0-coverage.md](docs/verification/tier0-coverage.md) | What the platform actually does. Binding over any design doc. |
 | [docs/verification/p0-exit.md](docs/verification/p0-exit.md) | The live two-node trial, and the fourteen defects it found. |
+| [docs/verification/p2-checks.md](docs/verification/p2-checks.md) | What the hardware said about each change since P1, and how each was told apart from the build before it. |
 | [unraid-manager-plan.md](unraid-manager-plan.md) | Product scope, module map, build phases. |
 
 ## Development prerequisites

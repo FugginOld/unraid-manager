@@ -138,12 +138,19 @@ No test may require a live Unraid box. That constraint drove most of the design:
   functions and does nothing else, so the suite can call them with no session,
   no daemon and no web server.
 
-## What P0 deliberately is not
+## What this deliberately is not
 
-Read-only against every peer. No mutation string appears anywhere in the domain
-table, and a test asserts it. No Tier 1 agent, no SSH, no cross-host actions, no
-Svelte, no design tokens, no rollups or hysteresis. See the Out of scope section
-of the P0 plan for the full list and the reasoning.
+**Read-only against every peer.** No mutation string appears anywhere in the
+domain table, and a test asserts it. No Tier 1 agent, no SSH, no cross-host
+actions. A peer needs no plugin installed — a read-scoped API key is the whole
+integration, which is the property everything else here is arranged to protect.
+
+That boundary is the one P0 drew and P1 kept. P1 added what its own list ruled
+out — the Vue bundle, design tokens, the rollup and its hysteresis — so those are
+no longer exclusions; the read-only line is. **P2 is where it moves**, and it
+moves in three ways at once: an agent on peers, writes to peers, and a watchdog
+that unmounts by itself. Until that phase lands, a defect here misreports a box;
+after it, a defect can act on one.
 
 ## Hard-won platform facts
 

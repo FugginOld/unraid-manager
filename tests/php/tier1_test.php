@@ -148,6 +148,90 @@ if ($hasSshKeygen) {
        . "(the fake-runner tests above still cover um_tier1_keygen's own logic)\n";
 }
 
+/* ── um_tier1_scan_host(), against a FAKE runner ──────────────────────────────
+   Same reasoning as the keygen fake: ssh-keyscan is as absent from the test
+   environment as ssh-keygen. $um_scan_version lets the fake return a
+   DIFFERENT key on a second call for the same address, which is what makes
+   "a second scan replaces rather than appends" provable rather than
+   assumed - a fake that always returned the same key could not tell a
+   replace from a no-op append of an identical line. */
+$um_scan_version = 1;
+function um_tier1_fake_scan(array $argv, ?string $input = null): array {
+    global $um_scan_version;
+    if ($argv[0] === 'ssh-keyscan') {
+        $address = end($argv);
+        return ['ok' => true, 'code' => 0,
+                'out' => "# comment line ssh-keyscan would also print\n"
+                       . "$address ssh-ed25519 AAAAFAKEHOSTKEYv{$um_scan_version}\n",
+                'err' => ''];
+    }
+    // ssh-keygen -lf - : $input is the known_hosts line just scanned.
+    return ['ok' => true, 'code' => 0,
+            'out' => "256 SHA256:fakefingerprintV{$um_scan_version} no comment (ED25519)\n",
+            'err' => ''];
+}
+function um_tier1_fake_scan_fail(array $argv, ?string $input = null): array {
+    return ['ok' => false, 'code' => 1, 'out' => '', 'err' => 'ssh-keyscan: connection timed out'];
+}
+
+$stmp = sys_get_temp_dir() . '/um_tier1s_' . getmypid();
+@mkdir($stmp, 0700, true);
+um_set_cfg_dir($stmp);
+$addr = '192.168.2.248';
+$khPath = um_keys_dir() . '/known_hosts';
+
+$scan1 = um_tier1_scan_host($addr, 'um_tier1_fake_scan');
+check('the fingerprint is returned, not just recorded',
+      $scan1 !== null && $scan1['fingerprint'] === 'SHA256:fakefingerprintV1');
+$lines = array_values(array_filter(explode("\n", (string) file_get_contents($khPath)), fn($l) => $l !== ''));
+check('a scan writes exactly one line for the address',
+      count(array_filter($lines, fn($l) => str_starts_with($l, $addr . ' '))) === 1);
+if (DIRECTORY_SEPARATOR === '/') {
+    check('known_hosts is written 0600',
+          substr(sprintf('%o', fileperms($khPath)), -4) === '0600');
+} else {
+    $tier1_src = $tier1_src ?? (string) file_get_contents($base . '/api/tier1.php');
+    check('scan_host chmods known_hosts 0600 (source check on Windows)',
+          str_contains($tier1_src, "chmod(\$path, 0600)"));
+}
+
+/* An unrelated host's own entry must survive a scan of a DIFFERENT address -
+   proves the strip is scoped to the address being scanned, not the whole
+   file. */
+file_put_contents($khPath, (string) file_get_contents($khPath) . "10.0.0.9 ssh-ed25519 AAAAUNRELATEDHOST\n");
+
+$um_scan_version = 2;
+$scan2 = um_tier1_scan_host($addr, 'um_tier1_fake_scan');
+$lines2 = array_values(array_filter(explode("\n", (string) file_get_contents($khPath)), fn($l) => $l !== ''));
+$matching = array_values(array_filter($lines2, fn($l) => str_starts_with($l, $addr . ' ')));
+check('a second scan of the same address replaces rather than appends',
+      count($matching) === 1 && str_contains($matching[0], 'v2'));
+check('...and the fingerprint reflects the new key, not the old one',
+      $scan2['fingerprint'] === 'SHA256:fakefingerprintV2' && $scan2['fingerprint'] !== $scan1['fingerprint']);
+check("an unrelated host's existing entry is preserved by the strip",
+      (bool) array_filter($lines2, fn($l) => str_starts_with($l, '10.0.0.9 ')));
+
+$beforeKH = (string) @file_get_contents($khPath);
+check('a failed scan returns null', um_tier1_scan_host($addr, 'um_tier1_fake_scan_fail') === null);
+check('...and leaves known_hosts untouched',
+      (string) @file_get_contents($khPath) === $beforeKH);
+
+@unlink($khPath);
+check('a failed scan with no existing known_hosts creates nothing',
+      um_tier1_scan_host($addr, 'um_tier1_fake_scan_fail') === null && !is_file($khPath));
+
+@unlink($khPath);
+@rmdir(um_keys_dir());
+@rmdir($stmp);
+um_set_cfg_dir('/boot/config/plugins/unraid-manager');
+
+/* No real-ssh-keyscan test: unlike ssh-keygen (which needs no network to
+   generate a pair), ssh-keyscan needs a live sshd to scan against, so
+   "binary present" would not be enough to make a real-binary test hermetic
+   the way the keygen one is - it would need a real reachable host, which
+   this suite has no business depending on. The fake-runner tests above
+   cover every branch of um_tier1_scan_host's own logic. */
+
 /* ── um_tier1_validate() ───────────────────────────────────────────────────── */
 
 check('a node id that is not ours is refused',

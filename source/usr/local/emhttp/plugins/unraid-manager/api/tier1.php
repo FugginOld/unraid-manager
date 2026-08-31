@@ -5,8 +5,9 @@
  *
  *   POST {action:prepare, node_id}   generate (or reuse) a keypair, return
  *                                    the installer command for that node
- *   POST {action:test,    node_id}   ask the daemon to run agent.hello, and
- *                                    on success write tier=1 to nodes.cfg
+ *   POST {action:test,    node_id}   scan+record the peer's host key, ask the
+ *                                    daemon to run agent.hello, and on
+ *                                    success write tier=1 to nodes.cfg
  *
  * This file contains NO transport logic: 'test' asks the daemon over the
  * existing unix socket, the way every other live action already works. The
@@ -66,6 +67,56 @@ function um_tier1_keygen(string $node_id, ?callable $runner = null): ?string {
     }
     $key = @file_get_contents($pub);
     return $key === false ? null : trim($key);
+}
+
+/* Trust-on-first-use, made a check rather than a shrug. agentclient.ssh_argv
+   passes StrictHostKeyChecking=yes and UserKnownHostsFile=<keys_dir>/known_hosts,
+   but nothing else ever writes that file - confirmed live against Golem:
+   "ssh exited 255: ... Host key verification failed" on every attempt until
+   this exists. um_tier1_installer's last line prints the peer's OWN
+   fingerprint (computed on the peer); this scans independently over the
+   network and returns what it found, so the operator has two strings to
+   compare rather than a scan that just records silently.
+
+   $runner is injectable exactly like um_tier1_keygen's: ssh-keyscan is as
+   absent from the test environment as ssh-keygen is.
+
+   Replaces, never appends: a re-imaged peer gets a new host key, and a stale
+   entry beside a fresh one makes ssh refuse the host outright with a key
+   conflict - which would look like "the agent broke" long after the actual
+   cause. Nothing is written if the scan itself fails - there must be no
+   known_hosts entry for a host that was never actually verified, the same
+   principle as um_tier1_persist's "nothing on a failed test". */
+function um_tier1_scan_host(string $address, ?callable $runner = null): ?array {
+    $runner = $runner ?? 'um_run_argv';
+    $scan = $runner(['ssh-keyscan', '-t', 'ed25519', '-T', '5', $address]);
+    if (!$scan['ok']) return null;
+    $line = null;
+    foreach (explode("\n", $scan['out']) as $candidate) {
+        $candidate = rtrim($candidate, "\r");
+        if ($candidate !== '' && $candidate[0] !== '#') { $line = $candidate; break; }
+    }
+    if ($line === null) return null;
+
+    /* The fingerprint is ssh-keygen's own computation, not ours - '-f -'
+       reads the public key line from stdin rather than a file, so nothing
+       here parses or hashes the key material itself. */
+    $fp = $runner(['ssh-keygen', '-lf', '-'], $line);
+    if (!$fp['ok'] || !preg_match('/(SHA256:\S+)/', $fp['out'], $m)) return null;
+
+    $path = um_keys_dir() . '/known_hosts';
+    $kept = [];
+    foreach (preg_split('/\R/', (string) @file_get_contents($path)) as $existing) {
+        if ($existing === '') continue;
+        $host = explode(',', explode(' ', $existing, 2)[0])[0];
+        if ($host !== $address) $kept[] = $existing;
+    }
+    $kept[] = $line;
+    if (!is_dir(um_keys_dir()) && !@mkdir(um_keys_dir(), 0700, true)) return null;
+    if (!um_atomic_write($path, implode("\n", $kept) . "\n")) return null;
+    @chmod($path, 0600);
+
+    return ['line' => $line, 'fingerprint' => $m[1]];
 }
 
 /* Pure rendering: everything it needs is passed in as a parameter, so the
@@ -138,10 +189,17 @@ if (PHP_SAPI !== 'cli') {
         um_json(['installer' => um_tier1_installer($pubkey, base64_encode($agent))]);
     }
     if ($action === 'test') {
-        /* Order is load-bearing: test first, write flash only after a real
-           reply, reload only after that write. A failed test must leave
-           nodes.cfg untouched - there must be no state meaning "probably
-           Tier 1" (spec section 4). */
+        /* Order is load-bearing: scan the peer's host key first - agent_hello
+           is exactly what needs known_hosts populated, since agentclient's
+           StrictHostKeyChecking=yes has nothing to check against otherwise -
+           then test, write flash only after a real reply, reload only after
+           that write. A failure at any step must leave nodes.cfg untouched -
+           there must be no state meaning "probably Tier 1" (spec section 4). */
+        $scan = um_tier1_scan_host($checked['node']['address']);
+        if ($scan === null) {
+            um_json(['ok' => false, 'error' => "could not verify the peer's host key "
+                     . '(ssh-keyscan failed)'], 502);
+        }
         $result = um_ctl(['cmd' => 'agent_hello', 'node_id' => $id], 30.0);
         if (!empty($result['ok'])) {
             if (!um_tier1_persist($id)) {
@@ -150,6 +208,11 @@ if (PHP_SAPI !== 'cli') {
             }
             um_ctl(['cmd' => 'reload']);
         }
+        /* The whole point of trust-on-first-use: the installer already
+           printed the peer's own fingerprint, computed on the peer. This is
+           the manager's independent half - the operator compares the two
+           strings, which is what makes it a check rather than a shrug. */
+        $result['fingerprint'] = $scan['fingerprint'];
         um_json($result);
     }
     um_json(['error' => 'unknown action'], 400);

@@ -10,9 +10,24 @@ DAEMON = os.path.abspath(os.path.join(
     os.path.dirname(__file__), '..', '..',
     'source', 'usr', 'local', 'emhttp', 'plugins', 'unraid-manager', 'daemon'))
 FIXTURES = os.path.abspath(os.path.join(os.path.dirname(__file__), 'fixtures'))
+AGENT = os.path.abspath(os.path.join(
+    os.path.dirname(__file__), '..', '..',
+    'source', 'usr', 'local', 'emhttp', 'plugins', 'unraid-manager',
+    'scripts', 'agent-exec'))
 
 if DAEMON not in sys.path:
     sys.path.insert(0, DAEMON)
+
+
+def load_agent():
+    """Import `agent-exec` despite it having no .py extension - sshd runs it."""
+    import importlib.machinery
+    import importlib.util
+    loader = importlib.machinery.SourceFileLoader('agent_exec', AGENT)
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    module = importlib.util.module_from_spec(spec)
+    loader.exec_module(module)
+    return module
 
 
 def fixture(name):

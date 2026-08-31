@@ -1,0 +1,80 @@
+#!/usr/bin/env python3
+"""Unraid-Manager Tier 1 agent. Invoked by sshd as a forced command.
+
+Stateless: writes nothing, creates nothing, keeps nothing between calls.
+
+One JSON envelope in on stdin, one JSON object out on stdout. Stdin rather
+than argv on purpose - with a forced command, whatever the client typed
+arrives in the variable holding whatever the client typed, an
+attacker-shaped string. Reading the body on stdin means that variable is
+never parsed, never split, never expanded. It is ignored, and a test asserts
+this file does not name it.
+
+The allowlist IS the authorization model. An unknown verb exits non-zero
+having run nothing.
+"""
+import json
+import socket
+import sys
+
+AGENT_VERSION = '2026.08.30'
+
+
+def hello(args):
+    return {'version': AGENT_VERSION, 'hostname': socket.gethostname(),
+            'verbs': sorted(VERBS)}
+
+
+def _no_args(args):
+    """Accepts an empty argument set and rejects anything else."""
+    if args:
+        raise ValueError('this verb takes no arguments')
+    return {}
+
+
+VERBS = {
+    'agent.hello': (_no_args, hello),
+}
+
+
+def _fail(verb, code, message):
+    return json.dumps({'ok': False, 'verb': verb, 'error': message, 'code': code})
+
+
+def handle(text, table):
+    """Pure: envelope text in, one JSON line out. Never raises."""
+    try:
+        envelope = json.loads(text)
+    except Exception:
+        return _fail(None, 'BAD_ENVELOPE', 'body is not JSON')
+    if not isinstance(envelope, dict):
+        return _fail(None, 'BAD_ENVELOPE', 'body is not an object')
+    verb = envelope.get('verb')
+    if not isinstance(verb, str) or not verb:
+        return _fail(None, 'BAD_ENVELOPE', 'no verb')
+    if verb not in table:
+        return _fail(verb, 'UNKNOWN_VERB', 'unknown verb')
+
+    validate, run = table[verb]
+    args = envelope.get('args') or {}
+    if not isinstance(args, dict):
+        return _fail(verb, 'BAD_ARGS', 'args is not an object')
+    try:
+        args = validate(args)
+    except ValueError as exc:
+        return _fail(verb, 'BAD_ARGS', str(exc))
+    try:
+        return json.dumps({'ok': True, 'verb': verb, 'data': run(args)})
+    except Exception as exc:                       # noqa: BLE001
+        return _fail(verb, 'RUN_FAILED', '%s: %s' % (type(exc).__name__, exc))
+
+
+def main():
+    reply = handle(sys.stdin.read(), VERBS)
+    sys.stdout.write(reply)
+    sys.stdout.write('\n')
+    return 0 if json.loads(reply)['ok'] else 1
+
+
+if __name__ == '__main__':
+    sys.exit(main())

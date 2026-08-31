@@ -32,6 +32,28 @@ class TestDomainTable(unittest.TestCase):
         for domain in collector.DOMAINS.values():
             self.assertNotIn('mutation', domain.query.lower(), domain.name)
 
+    def test_a_tier_0_node_gets_only_graphql_domains(self):
+        for domain in collector.domains_for_lane(collector.SLOW, tier=0):
+            self.assertEqual(collector.GRAPHQL, domain.transport, domain.name)
+
+    def test_every_existing_domain_still_reaches_a_tier_0_node(self):
+        # The regression that matters: adding a dimension must not quietly
+        # remove a domain a P1 box was already collecting.
+        before = {'info', 'array', 'shares', 'notifications', 'metrics',
+                  'parity', 'disks', 'plugins', 'logfiles'}
+        got = {d.name for lane in (collector.FAST, collector.SLOW)
+               for d in collector.domains_for_lane(lane, tier=0)}
+        self.assertEqual(before, got)
+
+    def test_no_mutation_anywhere_in_the_verb_table(self):
+        # The structural guarantee of P2a, on the manager's side. The agent
+        # asserts the same thing about its own source in test_agent_exec.
+        for domain in collector.DOMAINS.values():
+            if domain.transport == collector.AGENT:
+                self.assertNotIn('mutation', domain.query.lower(), domain.name)
+                for forbidden in ('umount', 'mount ', 'delete', 'remove', 'stop'):
+                    self.assertNotIn(forbidden, domain.query.lower(), domain.name)
+
     def test_no_introspection_query(self):
         # Constraint 4: introspection is off in production.
         for domain in collector.DOMAINS.values():

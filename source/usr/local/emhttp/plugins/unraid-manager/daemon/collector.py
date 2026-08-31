@@ -19,7 +19,10 @@ SLOW_TIMEOUT = 90
 
 KB = 1024
 
-Domain = namedtuple('Domain', 'name lane query timeout parse')
+GRAPHQL = 'graphql'
+AGENT = 'agent'
+
+Domain = namedtuple('Domain', 'name lane query timeout parse transport min_tier')
 Result = namedtuple('Result', 'domain status payload error samples')
 
 
@@ -249,8 +252,12 @@ def _samples_for(domain_name, payload):
 
 # -- the domain table --------------------------------------------------------
 
-def _domain(name, lane, query, parse):
-    return Domain(name, lane, query, FAST_TIMEOUT if lane == FAST else SLOW_TIMEOUT, parse)
+def _domain(name, lane, query, parse, transport=GRAPHQL, min_tier=0):
+    # `query` carries the GraphQL document for a graphql domain and the VERB
+    # NAME for an agent domain. One field, because everything downstream - the
+    # no-mutation assertion included - only ever asks "what did we send".
+    return Domain(name, lane, query, FAST_TIMEOUT if lane == FAST else SLOW_TIMEOUT,
+                  parse, transport, min_tier)
 
 
 DOMAINS = {}
@@ -289,8 +296,15 @@ for _d in [
     DOMAINS[_d.name] = _d
 
 
-def domains_for_lane(lane):
-    return [d for d in DOMAINS.values() if d.lane == lane]
+def domains_for_lane(lane, tier=0):
+    """The domains this lane runs against a node at this tier.
+
+    A Tier 0 node simply has fewer domains. That IS the plan's 'degrade
+    gracefully to Tier 0' rule - satisfied structurally, rather than by a check
+    inside each feature that someone will forget to write.
+    """
+    return [d for d in DOMAINS.values()
+            if d.lane == lane and d.min_tier <= int(tier or 0)]
 
 
 def collect(post_fn, node, domain):

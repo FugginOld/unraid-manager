@@ -343,7 +343,7 @@ class Manager(object):
         target = dict(node, key=key)
 
         results = []
-        for domain in collector.domains_for_lane(lane):
+        for domain in collector.domains_for_lane(lane, node.get('tier', 0)):
             if key is None:
                 results.append(collector.Result(
                     domain.name, 'unknown', None,

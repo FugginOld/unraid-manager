@@ -151,18 +151,23 @@ class TestReadVerbs(unittest.TestCase):
         self.assertEqual('BAD_ARGS', got['code'])
 
         # An unexpected key alongside a valid devices list is refused too,
-        # and the message names the offending key.
+        # and the message names the offending key. 'zork', not 'x' - 'x'
+        # is a substring of "unexpected" and would pass for the wrong reason.
         got = self.reply(json.dumps({'verb': 'smart.attributes',
-                                     'args': {'devices': ['/dev/sda'], 'x': 1}}))
+                                     'args': {'devices': ['/dev/sda'], 'zork': 1}}))
         self.assertFalse(got['ok'])
         self.assertEqual('BAD_ARGS', got['code'])
-        self.assertIn('x', got['error'])
+        self.assertIn('zork', got['error'])
 
-        # A single device given as a bare string, not a one-item list.
+        # A single device given as a bare string, not a one-item list. Without
+        # the isinstance guard this falls through to the membership check,
+        # which iterates the string as characters and still ends up BAD_ARGS
+        # for the wrong reason - so pin the message, not just the code.
         got = self.reply(json.dumps({'verb': 'smart.attributes',
                                      'args': {'devices': '/dev/sda'}}))
         self.assertFalse(got['ok'])
         self.assertEqual('BAD_ARGS', got['code'])
+        self.assertIn('devices must be a list', got['error'])
 
     def test_a_traversal_argument_is_refused_the_same_way(self):
         self._patch('devices', lambda: ['/dev/sda'])
@@ -282,7 +287,8 @@ class TestReadVerbs(unittest.TestCase):
             source = fh.read()
         for forbidden in ('umount', 'mkfs', 'shutdown', 'reboot',
                           "'w'", '"w"', 'os.remove', 'shutil',
-                          'os.rename', 'os.mkdir', "'wb'", "mode='a'"):
+                          'os.rename', 'os.mkdir', "'wb'", "mode='a'",
+                          'os.unlink', 'os.makedirs', 'pathlib', 'write_text'):
             self.assertNotIn(forbidden, source, forbidden)
 
 

@@ -141,16 +141,25 @@ No test may require a live Unraid box. That constraint drove most of the design:
 ## What this deliberately is not
 
 **Read-only against every peer.** No mutation string appears anywhere in the
-domain table, and a test asserts it. No Tier 1 agent, no SSH, no cross-host
-actions. A peer needs no plugin installed — a read-scoped API key is the whole
-integration, which is the property everything else here is arranged to protect.
+domain table OR the agent's verb table, and tests assert it on both sides.
 
-That boundary is the one P0 drew and P1 kept. P1 added what its own list ruled
-out — the Vue bundle, design tokens, the rollup and its hysteresis — so those are
-no longer exclusions; the read-only line is. **P2 is where it moves**, and it
-moves in three ways at once: an agent on peers, writes to peers, and a watchdog
-that unmounts by itself. Until that phase lands, a defect here misreports a box;
-after it, a defect can act on one.
+That is now the only line left. P1 added what its own list ruled out — the Vue
+bundle, design tokens, the rollup and its hysteresis. **P2a moved two more:**
+there IS a Tier 1 agent now, and there IS SSH, verified against Golem on
+2026-08-31.
+
+What P2a deliberately did NOT move is the mutation boundary. A Tier 1 peer runs
+one stateless script reached through an SSH forced command, and every verb in it
+reads. So a defect today still only misreports a box.
+
+**A peer still needs no plugin.** Tier 0 is a read-scoped API key and nothing
+else; Tier 1 adds one file on flash and one `authorized_keys` line. That property
+is what the phase was arranged to protect, and it survived.
+
+**P2b is where the mutation boundary moves** — M5's mount manager and a watchdog
+that unmounts by itself. After that, a defect can act on a box rather than
+misreport one, which is why the confirm-token flow and the append-only action
+journal arrive with it rather than before it.
 
 ## Hard-won platform facts
 

@@ -4,9 +4,12 @@ One pane over every Unraid box on the network. Installs on one host — the
 **manager** — and polls the rest over Unraid's official GraphQL API. Peers need
 no plugin installed; a read-scoped API key is the whole integration.
 
-Status: **P1 complete** — the pane ships fleet health, the disk table and the
-drift matrix, verified on two live boxes. Still read-only against every peer.
-Not yet released — install from source, see [HOWTO.md](HOWTO.md).
+Status: **P2a complete** — the pane ships fleet health, the disk table and the
+drift matrix, and a peer can now be enrolled as **Tier 1**: one script on its
+flash reached over SSH through a forced command, for the things GraphQL does not
+expose. Still **read-only against every peer** — no verb in the agent writes
+anything. Verified on two live boxes. Not yet released — install from source, see
+[HOWTO.md](HOWTO.md).
 
 ## Docs
 

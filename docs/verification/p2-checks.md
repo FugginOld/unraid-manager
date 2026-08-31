@@ -161,3 +161,75 @@ ONLINE and scrubbed clean, so nothing is wrong today, but a pool named for backu
 has no redundancy: either disk failing loses all of it. Recorded here because it
 is exactly the standing finding M4 is meant to surface, and because this check saw
 it first.
+
+## 2026-08-31 — P2a, the Tier 1 agent, verified end to end (`a2d469a`)
+
+Golem enrolled as a Tier 1 peer from Raven. **No plugin on Golem** — one script on
+flash and one `authorized_keys` line, which is the property the whole phase was
+arranged to protect.
+
+```
+{"ok":true,"version":"2026.08.30",
+ "verbs":["agent.hello","mounts.list","pool.balance","smart.attributes"]}
+```
+
+| Exit criterion | Result |
+|---|---|
+| Host key recorded, fingerprint matched the peer's own | ✅ `SHA256:J1qlDF6/…LubAk` identical on both sides |
+| Forced command fires | ✅ settles the `-N` ruling on real sshd |
+| Unknown verb refused, nothing run | ✅ `UNKNOWN_VERB` for `rm.everything` |
+| Bad device refused by enumeration | ✅ `BAD_ARGS: not a device on this node: /dev/nope` |
+| Real SMART data over the agent | ✅ full `smartctl --json` for `/dev/sda` |
+| Survives a peer reboot | ⬜ not yet exercised — see below |
+
+### Two design decisions the box overturned
+
+**1. Nothing on `/boot` can ever be executed.** Live from Golem:
+
+```
+/dev/sdaa1 /boot vfat rw,noatime,nodiratime,fmask=0177,dmask=0077,...
+-rw------- 1 root root 7356 /boot/config/plugins/unraid-manager/agent-exec
+/boot/.../agent-exec   ->  Permission denied, exit=126
+python3 /boot/.../agent-exec  ->  {"ok": true, ...} exit=0
+```
+
+`fmask=0177` forces every file on flash to `0600`. The execute bit is not unset,
+it is **unsettable** — the installer's `chmod 700` was a silent no-op that appeared
+to succeed. Fixed by naming the interpreter in the forced command
+(`/usr/bin/python3 <script>`), so the script is an argument rather than the
+executable. Reading a file on that mount was never blocked; only `execve` is. The
+flash-resident design survives with no boot hook and still no plugin on the peer.
+The `chmod` was **deleted** rather than left as decoration: a chmod that appears to
+work and changes nothing is worse than none.
+
+**2. `known_hosts` was read but never written.** `agentclient` passes
+`StrictHostKeyChecking=yes` and `UserKnownHostsFile=…`, and nothing created that
+file. First live call: `ssh exited 255: No ED25519 host key is known for
+192.168.2.248 and you have requested strict checking.` The spec said "written at
+enrollment"; the task brief dropped it. Enrollment now scans the host key, strips
+any stale entry for that address before appending, and returns the fingerprint so
+the operator can compare it against the one the installer printed on the peer.
+
+Neither was reachable by any test. Every test injects `run_fn` and never touches
+ssh — the tradeoff that keeps the suite runnable on Windows with no ssh binary.
+
+### `/root/.ssh` is the symlink, not `authorized_keys`
+
+```
+lrwxrwxrwx /root/.ssh -> /boot/config/ssh/root/
+stat -c '%i' both paths -> 3302607, 3302607
+```
+
+The **directory** points at flash, so everything written into it persists by
+construction. Worth stating precisely: an earlier note in this file called the
+*file* a symlink, which made `sed -i` look dangerous when it never was here.
+It also means Golem had **no root key at all** before this — its
+`authorized_keys` was a single blank line, and the 746 bytes recorded on
+2026-08-30 was Raven's file, not Golem's.
+
+### Still open
+
+The reboot test. `/root/.ssh` resolving onto flash makes persistence structural
+rather than hopeful, but this phase has twice been wrong about something that
+looked obvious — `-N` and `chmod 700` both — so it is recorded as **unverified**,
+not as proven by inference.

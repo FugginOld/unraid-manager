@@ -1,0 +1,410 @@
+{
+ "device": {
+  "info_name": "/dev/sda",
+  "name": "/dev/sda",
+  "protocol": "SCSI",
+  "type": "scsi"
+ },
+ "device_type": {
+  "name": "disk",
+  "scsi_terminology": "Peripheral Device Type [PDT]",
+  "scsi_value": 0
+ },
+ "form_factor": {
+  "name": "3.5 inches",
+  "scsi_value": 2
+ },
+ "json_format_version": [
+  1,
+  0
+ ],
+ "local_time": {
+  "asctime": "Sun Aug 30 22:29:55 2026 EDT",
+  "time_t": 1788143395
+ },
+ "logical_block_size": 4096,
+ "model_name": "HITACHI H0H72121CLAR12T0",
+ "power_on_time": {
+  "hours": 55161,
+  "minutes": 47
+ },
+ "rotation_rate": 7200,
+ "scsi_error_counter_log": {
+  "read": {
+   "correction_algorithm_invocations": 17636562,
+   "errors_corrected_by_eccdelayed": 1,
+   "errors_corrected_by_eccfast": 0,
+   "errors_corrected_by_rereads_rewrites": 0,
+   "gigabytes_processed": "1131070.669",
+   "total_errors_corrected": 1,
+   "total_uncorrected_errors": 0
+  },
+  "verify": {
+   "correction_algorithm_invocations": 17448,
+   "errors_corrected_by_eccdelayed": 0,
+   "errors_corrected_by_eccfast": 0,
+   "errors_corrected_by_rereads_rewrites": 0,
+   "gigabytes_processed": "28213.250",
+   "total_errors_corrected": 0,
+   "total_uncorrected_errors": 0
+  },
+  "write": {
+   "correction_algorithm_invocations": 319694,
+   "errors_corrected_by_eccdelayed": 0,
+   "errors_corrected_by_eccfast": 0,
+   "errors_corrected_by_rereads_rewrites": 0,
+   "gigabytes_processed": "469129.441",
+   "total_errors_corrected": 0,
+   "total_uncorrected_errors": 0
+  }
+ },
+ "scsi_extended_self_test_seconds": 6,
+ "scsi_format_status": {
+  "blocks_reassigned_during_format": 0,
+  "grown_defects_during_cert": 0,
+  "power_on_minutes_since_format": 1466560,
+  "total_new_block_since_format": 0
+ },
+ "scsi_grown_defect_list": 0,
+ "scsi_lb_provisioning": {
+  "management_enabled": {
+   "name": "LBPME",
+   "value": 0
+  },
+  "name": "fully provisioned",
+  "read_zeros": {
+   "name": "LBPRZ",
+   "value": 0
+  },
+  "value": 0
+ },
+ "scsi_model_name": "HITACHI H0H72121CLAR12T0",
+ "scsi_product": "H0H72121CLAR12T0",
+ "scsi_revision": "Q3D0",
+ "scsi_self_test_0": {
+  "code": {
+   "string": "Background short",
+   "value": 1
+  },
+  "power_on_time": {
+   "aka": "accumulated_power_on_hours",
+   "hours": 33845
+  },
+  "result": {
+   "string": "Completed",
+   "value": 0
+  }
+ },
+ "scsi_self_test_1": {
+  "code": {
+   "string": "Background short",
+   "value": 1
+  },
+  "power_on_time": {
+   "aka": "accumulated_power_on_hours",
+   "hours": 33845
+  },
+  "result": {
+   "string": "Completed",
+   "value": 0
+  }
+ },
+ "scsi_self_test_10": {
+  "code": {
+   "string": "Background short",
+   "value": 1
+  },
+  "power_on_time": {
+   "aka": "accumulated_power_on_hours",
+   "hours": 23768
+  },
+  "result": {
+   "string": "Completed",
+   "value": 0
+  }
+ },
+ "scsi_self_test_11": {
+  "code": {
+   "string": "Background short",
+   "value": 1
+  },
+  "power_on_time": {
+   "aka": "accumulated_power_on_hours",
+   "hours": 22304
+  },
+  "result": {
+   "string": "Completed",
+   "value": 0
+  }
+ },
+ "scsi_self_test_12": {
+  "code": {
+   "string": "Background short",
+   "value": 1
+  },
+  "power_on_time": {
+   "aka": "accumulated_power_on_hours",
+   "hours": 20840
+  },
+  "result": {
+   "string": "Completed",
+   "value": 0
+  }
+ },
+ "scsi_self_test_13": {
+  "code": {
+   "string": "Background short",
+   "value": 1
+  },
+  "power_on_time": {
+   "aka": "accumulated_power_on_hours",
+   "hours": 19400
+  },
+  "result": {
+   "string": "Completed",
+   "value": 0
+  }
+ },
+ "scsi_self_test_14": {
+  "code": {
+   "string": "Background short",
+   "value": 1
+  },
+  "power_on_time": {
+   "aka": "accumulated_power_on_hours",
+   "hours": 17552
+  },
+  "result": {
+   "string": "Completed",
+   "value": 0
+  }
+ },
+ "scsi_self_test_15": {
+  "code": {
+   "string": "Background short",
+   "value": 1
+  },
+  "power_on_time": {
+   "aka": "accumulated_power_on_hours",
+   "hours": 16112
+  },
+  "result": {
+   "string": "Completed",
+   "value": 0
+  }
+ },
+ "scsi_self_test_16": {
+  "code": {
+   "string": "Background short",
+   "value": 1
+  },
+  "power_on_time": {
+   "aka": "accumulated_power_on_hours",
+   "hours": 14672
+  },
+  "result": {
+   "string": "Completed",
+   "value": 0
+  }
+ },
+ "scsi_self_test_17": {
+  "code": {
+   "string": "Background short",
+   "value": 1
+  },
+  "power_on_time": {
+   "aka": "accumulated_power_on_hours",
+   "hours": 13232
+  },
+  "result": {
+   "string": "Completed",
+   "value": 0
+  }
+ },
+ "scsi_self_test_18": {
+  "code": {
+   "string": "Background short",
+   "value": 1
+  },
+  "power_on_time": {
+   "aka": "accumulated_power_on_hours",
+   "hours": 11792
+  },
+  "result": {
+   "string": "Completed",
+   "value": 0
+  }
+ },
+ "scsi_self_test_19": {
+  "code": {
+   "string": "Background short",
+   "value": 1
+  },
+  "power_on_time": {
+   "aka": "accumulated_power_on_hours",
+   "hours": 10352
+  },
+  "result": {
+   "string": "Completed",
+   "value": 0
+  }
+ },
+ "scsi_self_test_2": {
+  "code": {
+   "string": "Foreground long",
+   "value": 6
+  },
+  "power_on_time": {
+   "aka": "accumulated_power_on_hours",
+   "hours": 32431
+  },
+  "result": {
+   "string": "Aborted (device reset ?)",
+   "value": 2
+  }
+ },
+ "scsi_self_test_3": {
+  "code": {
+   "string": "Foreground short",
+   "value": 5
+  },
+  "power_on_time": {
+   "aka": "accumulated_power_on_hours",
+   "hours": 32426
+  },
+  "result": {
+   "string": "Completed",
+   "value": 0
+  }
+ },
+ "scsi_self_test_4": {
+  "code": {
+   "string": "Background short",
+   "value": 1
+  },
+  "power_on_time": {
+   "aka": "accumulated_power_on_hours",
+   "hours": 32426
+  },
+  "result": {
+   "string": "Completed",
+   "value": 0
+  }
+ },
+ "scsi_self_test_5": {
+  "code": {
+   "string": "Background short",
+   "value": 1
+  },
+  "power_on_time": {
+   "aka": "accumulated_power_on_hours",
+   "hours": 32425
+  },
+  "result": {
+   "string": "Completed",
+   "value": 0
+  }
+ },
+ "scsi_self_test_6": {
+  "code": {
+   "string": "Background short",
+   "value": 1
+  },
+  "power_on_time": {
+   "aka": "accumulated_power_on_hours",
+   "hours": 29576
+  },
+  "result": {
+   "string": "Completed",
+   "value": 0
+  }
+ },
+ "scsi_self_test_7": {
+  "code": {
+   "string": "Background short",
+   "value": 1
+  },
+  "power_on_time": {
+   "aka": "accumulated_power_on_hours",
+   "hours": 28112
+  },
+  "result": {
+   "string": "Completed",
+   "value": 0
+  }
+ },
+ "scsi_self_test_8": {
+  "code": {
+   "string": "Background short",
+   "value": 1
+  },
+  "power_on_time": {
+   "aka": "accumulated_power_on_hours",
+   "hours": 26648
+  },
+  "result": {
+   "string": "Completed",
+   "value": 0
+  }
+ },
+ "scsi_self_test_9": {
+  "code": {
+   "string": "Background short",
+   "value": 1
+  },
+  "power_on_time": {
+   "aka": "accumulated_power_on_hours",
+   "hours": 25208
+  },
+  "result": {
+   "string": "Completed",
+   "value": 0
+  }
+ },
+ "scsi_start_stop_cycle_counter": {
+  "accumulated_load_unload_cycles": 8711,
+  "accumulated_start_stop_cycles": 7381,
+  "specified_cycle_count_over_device_lifetime": 50000,
+  "specified_load_unload_count_over_device_lifetime": 600000,
+  "week_of_manufacture": "49",
+  "year_of_manufacture": "2017"
+ },
+ "scsi_transport_protocol": {
+  "name": "SAS (SPL-4)",
+  "value": 6
+ },
+ "scsi_vendor": "HITACHI",
+ "scsi_version": "SPC-4",
+ "seagate_farm_log": {
+  "supported": false
+ },
+ "smart_status": {
+  "passed": true
+ },
+ "smart_support": {
+  "available": true,
+  "enabled": true
+ },
+ "smartctl": {
+  "build_info": "(local build)",
+  "exit_status": 0,
+  "platform_info": "x86_64-linux-6.18.38-Unraid",
+  "pre_release": false,
+  "svn_revision": "5714",
+  "version": [
+   7,
+   5
+  ]
+ },
+ "temperature": {
+  "current": 37,
+  "drive_trip": 60
+ },
+ "temperature_warning": {
+  "enabled": true
+ },
+ "user_capacity": {
+  "blocks": 2929721344,
+  "bytes": 12000138625024
+ }
+}

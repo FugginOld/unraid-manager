@@ -1,0 +1,142 @@
+{
+ "device": {
+  "info_name": "/dev/sdb",
+  "name": "/dev/sdb",
+  "protocol": "SCSI",
+  "type": "scsi"
+ },
+ "device_type": {
+  "name": "disk",
+  "scsi_terminology": "Peripheral Device Type [PDT]",
+  "scsi_value": 0
+ },
+ "form_factor": {
+  "name": "3.5 inches",
+  "scsi_value": 2
+ },
+ "json_format_version": [
+  1,
+  0
+ ],
+ "local_time": {
+  "asctime": "Sun Aug 30 22:29:55 2026 EDT",
+  "time_t": 1788143395
+ },
+ "logical_block_size": 512,
+ "model_name": "SEAGATE ST14000NM002G",
+ "physical_block_size": 4096,
+ "power_on_time": {
+  "hours": 28682,
+  "minutes": 12
+ },
+ "rotation_rate": 7200,
+ "scsi_error_counter_log": {
+  "read": {
+   "correction_algorithm_invocations": 0,
+   "errors_corrected_by_eccdelayed": 0,
+   "errors_corrected_by_eccfast": 0,
+   "errors_corrected_by_rereads_rewrites": 0,
+   "gigabytes_processed": "82658.757",
+   "total_errors_corrected": 0,
+   "total_uncorrected_errors": 0
+  },
+  "verify": {
+   "correction_algorithm_invocations": 0,
+   "errors_corrected_by_eccdelayed": 0,
+   "errors_corrected_by_eccfast": 0,
+   "errors_corrected_by_rereads_rewrites": 0,
+   "gigabytes_processed": "1.299",
+   "total_errors_corrected": 0,
+   "total_uncorrected_errors": 0
+  },
+  "write": {
+   "correction_algorithm_invocations": 0,
+   "errors_corrected_by_eccdelayed": 0,
+   "errors_corrected_by_eccfast": 0,
+   "errors_corrected_by_rereads_rewrites": 0,
+   "gigabytes_processed": "2645.355",
+   "total_errors_corrected": 0,
+   "total_uncorrected_errors": 0
+  }
+ },
+ "scsi_extended_self_test_seconds": 75960,
+ "scsi_grown_defect_list": 0,
+ "scsi_lb_provisioning": {
+  "management_enabled": {
+   "name": "LBPME",
+   "value": 0
+  },
+  "name": "fully provisioned",
+  "read_zeros": {
+   "name": "LBPRZ",
+   "value": 0
+  },
+  "value": 0
+ },
+ "scsi_model_name": "SEAGATE ST14000NM002G",
+ "scsi_pending_defects": {
+  "count": 0
+ },
+ "scsi_product": "ST14000NM002G",
+ "scsi_revision": "E002",
+ "scsi_self_test_0": {
+  "code": {
+   "string": "Background long",
+   "value": 2
+  },
+  "power_on_time": {
+   "aka": "accumulated_power_on_hours",
+   "hours": 22992
+  },
+  "result": {
+   "string": "Completed",
+   "value": 0
+  }
+ },
+ "scsi_start_stop_cycle_counter": {
+  "accumulated_load_unload_cycles": 4403,
+  "accumulated_start_stop_cycles": 1845,
+  "specified_cycle_count_over_device_lifetime": 50000,
+  "specified_load_unload_count_over_device_lifetime": 600000,
+  "week_of_manufacture": "39",
+  "year_of_manufacture": "2020"
+ },
+ "scsi_transport_protocol": {
+  "name": "SAS (SPL-4)",
+  "value": 6
+ },
+ "scsi_vendor": "SEAGATE",
+ "scsi_version": "SPC-5",
+ "seagate_farm_log": {
+  "supported": true
+ },
+ "smart_status": {
+  "passed": true
+ },
+ "smart_support": {
+  "available": true,
+  "enabled": true
+ },
+ "smartctl": {
+  "build_info": "(local build)",
+  "exit_status": 0,
+  "platform_info": "x86_64-linux-6.18.38-Unraid",
+  "pre_release": false,
+  "svn_revision": "5714",
+  "version": [
+   7,
+   5
+  ]
+ },
+ "temperature": {
+  "current": 40,
+  "drive_trip": 60
+ },
+ "temperature_warning": {
+  "enabled": true
+ },
+ "user_capacity": {
+  "blocks": 27344764928,
+  "bytes": 14000519643136
+ }
+}

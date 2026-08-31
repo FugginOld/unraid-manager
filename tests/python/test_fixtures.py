@@ -265,7 +265,28 @@ class TestSeedFixtures(unittest.TestCase):
         # matches as one run (a UUID's longest hyphen-delimited segment is 12).
         # Seeds are hand-written, but a real capture lands in fixtures/<label>/
         # (outside seed/), so the whole fixtures tree is walked, not just seed/.
-        keyish = re.compile(r'[A-Za-z0-9_]{28,}')
+        # Two patterns, because one loose one was both too broad and too weak.
+        #
+        # `[A-Za-z0-9_]{28,}` matched ANY run of 28 word characters, so the
+        # first real captured SMART document tripped it on the smartctl field
+        # name `correction_algorithm_invocations` - a false positive that says
+        # nothing about credentials. Loosening it to make a fixture pass would
+        # have been the wrong move; instead it is now split so that each half
+        # asserts something true.
+        #
+        # 1. The known threat, with margin. tier0-coverage.md records that API
+        #    keys on both boxes are 64 lowercase hex characters, but pinning
+        #    the length to exactly 64 would let a 40-character hex token
+        #    through that the old rule caught - a real weakening, found by
+        #    testing the claim rather than asserting it. 32 is the floor, and
+        #    nothing already in the fixtures tree matches it.
+        # 2. Token-shaped runs generally. A credential mixes cases and digits;
+        #    a snake_case identifier does neither, which is what separates
+        #    `correction_algorithm_invocations` from a base64 or hex token.
+        #    Underscore and hyphen stay in the class so URL-safe base64 is
+        #    still caught - dropping them would have been the real weakening.
+        hexkey = re.compile(r'[a-f0-9]{32,}')
+        tokenish = re.compile(r'[A-Za-z0-9_-]{28,}')
         for root, _dirs, files in os.walk(context.FIXTURES):
             for entry in files:
                 path = os.path.join(root, entry)
@@ -274,8 +295,12 @@ class TestSeedFixtures(unittest.TestCase):
                 # scanned as best-effort text, same as the capture script does.
                 with open(path, 'rb') as fh:
                     text = fh.read().decode('utf-8', 'replace')
-                match = keyish.search(text)
-                self.assertIsNone(match, os.path.relpath(path, context.FIXTURES))
+                rel = os.path.relpath(path, context.FIXTURES)
+                self.assertIsNone(hexkey.search(text), rel)
+                for run in tokenish.findall(text):
+                    mixed = (any(c.isupper() for c in run)
+                             and any(c.isdigit() for c in run))
+                    self.assertFalse(mixed, '%s: %s' % (rel, run))
 
 
 class TestCaptureScript(unittest.TestCase):

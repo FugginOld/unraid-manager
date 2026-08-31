@@ -6,8 +6,6 @@ the same reason `parse_response` is testable with no socket.
 """
 import json
 
-SSH_TIMEOUT = 30
-
 
 class AgentUnreachable(Exception):
     """We could not get an answer out of the peer at all."""
@@ -39,9 +37,14 @@ def exec_response(returncode, stdout, stderr):
     if not isinstance(reply, dict) or 'ok' not in reply:
         return _unreachable(returncode, 'reply is not an agent envelope')
     if reply.get('ok'):
+        if 'data' not in reply:
+            # Absent vs empty: a missing key is "the agent said nothing", not
+            # "the answer is empty" - conflating them turns silence into a
+            # false "no results" for whatever reads it downstream.
+            raise AgentRefused('the agent replied ok with no data')
         return reply.get('data')
     code = reply.get('code')
-    message = reply.get('error') or code or 'the agent refused'
+    message = (reply.get('error') or code or 'the agent refused')[:200]
     if code == 'UNKNOWN_VERB':
         raise VerbUnsupported(message)
     raise AgentRefused(message)

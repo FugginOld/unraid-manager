@@ -1,3 +1,4 @@
+import json
 import unittest
 
 import context                                     # noqa: F401
@@ -45,3 +46,27 @@ class TestExecResponse(unittest.TestCase):
         with self.assertRaises(agentclient.AgentUnreachable) as caught:
             agentclient.exec_response(255, '', 'Permission denied (publickey).')
         self.assertIn('publickey', str(caught.exception))
+
+    def test_ok_with_no_data_key_at_all_is_a_refusal_not_empty_data(self):
+        # "the agent said nothing" must not silently become "empty result" -
+        # a caller doing (data or {}).items() cannot tell the two apart once
+        # None and {} both arrive labelled success.
+        with self.assertRaises(agentclient.AgentRefused):
+            agentclient.exec_response(
+                0, '{"ok": true, "verb": "smart.attributes"}', '')
+
+    def test_ok_with_data_present_but_empty_still_returns_it(self):
+        # The other half of the same distinction: a PRESENT but falsy data
+        # value ({}) is a legitimate answer and must not be mistaken for the
+        # missing-key case above.
+        got = agentclient.exec_response(
+            0, '{"ok": true, "verb": "smart.attributes", "data": {}}', '')
+        self.assertEqual({}, got)
+
+    def test_a_refusal_message_is_bounded_in_length(self):
+        huge = 'x' * 10000
+        with self.assertRaises(agentclient.AgentRefused) as caught:
+            agentclient.exec_response(
+                1, json.dumps({'ok': False, 'verb': 'smart.attributes',
+                               'code': 'BAD_ARGS', 'error': huge}), '')
+        self.assertLess(len(str(caught.exception)), 300)

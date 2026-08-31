@@ -635,9 +635,17 @@ class Manager(object):
         behind one slow or dead peer -- the same reason _test_node does not
         take it either.
 
-        Nothing is persisted on a failed test: there must be no state meaning
-        'probably Tier 1' (spec section 4). Only a real reply writes tier=1
-        and logs the enrollment.
+        Writes NO state of its own. `tier` already has one source of truth --
+        flash's nodes.cfg, read by sync_registry() -- and a second one here
+        would be exactly the bug sync_registry's own docstring warns about:
+        flash is authoritative, so a value this method wrote directly to
+        sqlite would survive only until the next reload() (a Settings save,
+        a node added or removed, a daemon restart) quietly folded it back to
+        whatever flash still says. Persisting tier=1 through flash, on a
+        success reply only, is api/tier1.php's job.
+
+        The event this logs is history, not state -- kind 'tier1' rather than
+        'enroll', which reload() already owns for a node's first sync.
         """
         node_id = args.get('node_id')
         node = self._node(node_id)
@@ -648,8 +656,7 @@ class Manager(object):
         except Exception as exc:                       # noqa: BLE001
             return {'ok': False, 'error': str(exc)}
         with self._lock:
-            store.set_tier(self.conn, node_id, 1)
-            store.log_event(self.conn, 'enroll', 'agent verified, node is now Tier 1',
+            store.log_event(self.conn, 'tier1', 'agent replied, version %s' % data.get('version'),
                              node_id=node_id)
         return {'ok': True, 'version': data.get('version'), 'verbs': data.get('verbs')}
 

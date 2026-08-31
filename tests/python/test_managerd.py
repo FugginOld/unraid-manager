@@ -543,36 +543,33 @@ class TestStatusAndHandlers(ManagerCase):
 
 
 class TestAgentHello(ManagerCase):
-    def test_a_real_reply_persists_tier_1_and_logs_an_enrollment(self):
+    def test_a_real_reply_is_reported_and_logged_under_its_own_kind(self):
+        # tier is NOT this handler's to write: flash's nodes.cfg is
+        # sync_registry()'s one source of truth for that column (api/tier1.php
+        # persists it there, on success, after this call returns). This
+        # handler is a pure test plus history - so kind='tier1', never
+        # 'enroll', which reload() already owns for a node's first sync into
+        # a brand new id, and which a query on kind='enroll' alone could not
+        # tell apart from this call.
         m = self.manager(nodes=[dict(NODE, tier=0)])
-        # reload() (run by self.manager()) already logged its own 'enroll' row
-        # for a brand new node id, so counting rows of kind 'enroll' before
-        # calling the handler is what makes this test able to tell "the
-        # handler logged one" apart from "the registry sync already did" -
-        # otherwise a version of _agent_hello with no logging of its own
-        # would still pass by pointing at that earlier row.
         before = self.conn.execute(
-            "SELECT COUNT(*) FROM events WHERE node_id=? AND kind='enroll'",
+            "SELECT COUNT(*) FROM events WHERE node_id=? AND kind='tier1'",
             ('a1b2',)).fetchone()[0]
         m.exec_fn = lambda node, verb, args, timeout: {'version': '1.2', 'verbs': ['agent.hello']}
         result = m.handlers()['agent_hello']({'node_id': 'a1b2'})
         self.assertEqual({'ok': True, 'version': '1.2', 'verbs': ['agent.hello']}, result)
         row = self.conn.execute('SELECT tier FROM nodes WHERE id=?', ('a1b2',)).fetchone()
-        self.assertEqual(1, row['tier'])
+        self.assertEqual(0, row['tier'], '_agent_hello must not write tier itself - '
+                          'api/tier1.php does, through flash')
         after = self.conn.execute(
-            "SELECT COUNT(*) FROM events WHERE node_id=? AND kind='enroll'",
-            ('a1b2',)).fetchone()[0]
-        self.assertEqual(before + 1, after)
+            "SELECT kind, message FROM events WHERE node_id=? AND kind='tier1'",
+            ('a1b2',)).fetchall()
+        self.assertEqual(before + 1, len(after))
+        self.assertIn('1.2', after[-1]['message'])
 
     def test_an_unreachable_agent_persists_nothing(self):
         # There must be no state meaning "probably Tier 1" (spec section 4).
-        # This is the mutation that matters: a version of _agent_hello that
-        # wrote tier=1 unconditionally would still return ok:False here and
-        # only this row/event check would catch it.
         m = self.manager(nodes=[dict(NODE, tier=0)])
-        # reload() (run by self.manager()) already logged its own 'enroll' row
-        # for a brand new node id - count from here so this test isolates
-        # what _agent_hello itself does, not what got the node here.
         before = self.conn.execute(
             'SELECT COUNT(*) FROM events WHERE node_id=?', ('a1b2',)).fetchone()[0]
 
@@ -590,6 +587,43 @@ class TestAgentHello(ManagerCase):
         m = self.manager()
         with self.assertRaises(ValueError):
             m.handlers()['agent_hello']({'node_id': 'nosuch'})
+
+
+class TestTierSurvivesReload(ManagerCase):
+    """The exact defect ruling 1 exists to close: a version of enrollment
+    that wrote tier=1 straight into sqlite (bypassing flash) was reverted by
+    the very next reload(), since sync_registry() treats nodes.cfg as
+    authoritative for this column. `nodes` here stands in for that file --
+    self.manager() captures it once into m._read_nodes, so re-pointing that
+    closure at the SAME list object and mutating the list in place is what
+    lets a later reload() see a change, the way a real reload() would see
+    api/tier1.php's rewrite of nodes.cfg.
+    """
+    def test_a_flash_write_survives_the_next_reload(self):
+        nodes = [dict(NODE, tier=0)]
+        m = self.manager(nodes=nodes)
+        m._read_nodes = lambda: nodes
+        self.assertEqual(0, self.conn.execute(
+            'SELECT tier FROM nodes WHERE id=?', ('a1b2',)).fetchone()['tier'])
+
+        # api/tier1.php's um_tier1_persist(), after a real agent_hello reply:
+        # flash gains tier=1 for this node.
+        nodes[0] = dict(nodes[0], tier=1)
+        m.reload()
+
+        self.assertEqual(1, self.conn.execute(
+            'SELECT tier FROM nodes WHERE id=?', ('a1b2',)).fetchone()['tier'],
+            'a reload after the flash write must not fold tier back to 0')
+
+    def test_a_failed_test_leaves_the_node_at_tier_0_across_a_reload(self):
+        # The mirror: nothing wrote flash (the test failed, or was never
+        # run), so a reload must not invent a tier bump from nothing either.
+        nodes = [dict(NODE, tier=0)]
+        m = self.manager(nodes=nodes)
+        m._read_nodes = lambda: nodes
+        m.reload()
+        self.assertEqual(0, self.conn.execute(
+            'SELECT tier FROM nodes WHERE id=?', ('a1b2',)).fetchone()['tier'])
 
 
 class TestLogging(unittest.TestCase):

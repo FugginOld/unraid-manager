@@ -109,5 +109,40 @@ check('an unknown node id is refused',
 check('a well-formed id naming no node is refused, not just a malformed one',
       um_tier1_validate(['node_id' => str_repeat('f', 32)])['ok'] === false);
 
+/* ── um_tier1_persist() ────────────────────────────────────────────────────── */
+/* This is the only place tier=1 is written, and it goes through nodes.cfg -
+   flash, not sqlite - because sync_registry() treats flash as authoritative
+   for this column. Two things matter: it flips tier and NOTHING else on the
+   node it targets, and it changes NOTHING when the id does not resolve. */
+
+$ptmp = sys_get_temp_dir() . '/um_tier1p_' . getmypid();
+@mkdir($ptmp, 0700, true);
+um_set_cfg_dir($ptmp);
+$pid = str_repeat('c', 32);
+um_write_nodes([[
+    'id' => $pid, 'name' => 'Golem', 'address' => '192.168.2.248',
+    'port' => 15137, 'tier' => 0, 'enabled' => 1,
+]]);
+
+check('persist succeeds for a real node', um_tier1_persist($pid) === true);
+$after = um_read_nodes();
+check('tier is now 1', $after[0]['tier'] === 1);
+/* The whole registry is read, mutated, and rewritten - rewriting to change
+   one column is exactly the shape of operation that quietly drops a field
+   nobody was looking at. Prove the other four survive untouched rather than
+   just checking tier flipped. */
+check('every other field round-trips untouched',
+      $after[0]['name'] === 'Golem' && $after[0]['address'] === '192.168.2.248'
+      && $after[0]['port'] === 15137 && $after[0]['enabled'] === 1);
+
+$beforeRaw = (string) file_get_contents(um_nodes_cfg());
+check('persist refuses an id that resolves to no node', um_tier1_persist(str_repeat('d', 32)) === false);
+check('...and a failed persist leaves nodes.cfg byte-for-byte unchanged',
+      (string) file_get_contents(um_nodes_cfg()) === $beforeRaw);
+
+@unlink(um_nodes_cfg());
+@rmdir($ptmp);
+um_set_cfg_dir('/boot/config/plugins/unraid-manager');
+
 echo $fails === 0 ? "tier1: all pass\n" : "tier1: $fails FAILED\n";
 exit($fails === 0 ? 0 : 1);

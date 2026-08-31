@@ -107,3 +107,57 @@ the search box is the first `v-model` in a tested view, and `vModelText`'s
 - **`bash tests/php/run.sh` in the php docker image silently skips
   `tests/js/*.mjs`** ("node not on PATH"), so the documented local workflow never
   runs them. `node tests/js/*.mjs` on the host does, and CI runs them too.
+
+## 2026-08-30 — P2a preconditions, answered on the box
+
+The three assumptions the Tier 1 agent spec rests on
+(`docs/superpowers/specs/2026-08-30-tier1-agent-design.md`), checked on Raven and
+Golem before a line of code was written. All three held; the check also caught a
+defect in the implementation plan that no off-box test would have found.
+
+**1. `authorized_keys` persistence — HELD, and simpler than the design feared.**
+
+```
+-rw------- 1 root root 746 Jan 16  2026 /root/.ssh/authorized_keys
+readlink -f -> /boot/config/ssh/root/authorized_keys
+```
+
+The conventional path is a symlink onto flash, so an append at `/root/.ssh/`
+writes through and survives a reboot with no plugin, no boot hook, and nothing in
+tmpfs. The peer footprint decision stands as designed.
+
+**It is not empty.** 746 bytes of the operator's own keys were already there. The
+installer appends; an installer that wrote the file would lock its owner out of
+their own box.
+
+**2. `smartctl --json` — HELD.** smartctl 7.5 on both boxes, `--json=c` returns a
+valid document. The agent passes it through untouched and the manager parses it,
+as designed — no text scraping needed.
+
+**3. Pools — ANSWERED.** `btrfs filesystem usage <mount>` works per mount point;
+Golem's `zpool status` reports its pool; Raven answers `no pools available`, which
+is a parseable statement rather than a failure. A pool parser can be written
+honestly, so `pool.balance`'s manager-side domain no longer has to stay deferred
+on this question.
+
+### The defect this caught
+
+`smartctl --json` includes `"serial_number"` and `"logical_unit_id"`. The plan had
+`parse_smart` storing the whole document in `node_state.payload`, which
+`api/disks.php` serves to the browser — against this repo's standing rule that no
+raw serial reaches an API response (plan §199, §443), the same rule for which
+`collector.py:328` already drops `serialNum` from the Tier 0 disk row.
+
+Two things follow, both settled before Task 1: `parse_smart` strips both fields
+before returning, with a test asserting neither can reach a payload; and the
+captured fixture is scrubbed at capture, since a real serial committed to a public
+history cannot be taken back.
+
+### An operational finding, unrelated to this work
+
+Golem's ZFS pool `medianucbackup` is a **two-device stripe, not a mirror** —
+`sdy1` and `sdz1` sit as sibling vdevs with no `mirror` or `raidz` parent. It is
+ONLINE and scrubbed clean, so nothing is wrong today, but a pool named for backups
+has no redundancy: either disk failing loses all of it. Recorded here because it
+is exactly the standing finding M4 is meant to surface, and because this check saw
+it first.

@@ -1,5 +1,7 @@
+import io
 import json
 import unittest
+from unittest import mock
 
 import context
 
@@ -47,9 +49,49 @@ class TestEnvelope(unittest.TestCase):
 
     def test_ssh_original_command_is_never_read(self):
         # With a forced command, that variable holds whatever the client typed.
-        # Reading it at all is the bug; this asserts the source does not.
+        # Reading it at all is the bug; this asserts the source does not. A
+        # concatenated spelling would dodge a literal-string grep, so also
+        # rule out the os.environ / os.getenv access it would take to read it.
         with open(context.AGENT, encoding='utf-8') as fh:
-            self.assertNotIn('SSH_ORIGINAL_COMMAND', fh.read())
+            source = fh.read()
+        self.assertNotIn('SSH_ORIGINAL_COMMAND', source)
+        self.assertNotIn('environ', source)
+        self.assertNotIn('getenv', source)
+
+    def test_a_validator_raising_anything_but_valueerror_still_yields_bad_args(self):
+        # validate() does real work (Task 2 reads /sys/block in one). An
+        # OSError escaping here must not escape handle() itself - that would
+        # leave the peer answering a traceback on stderr and nothing on
+        # stdout, which the manager can't tell apart from a dead connection.
+        def _boom(a):
+            raise TypeError('boom')
+        table = {'v': (_boom, lambda a, t: {})}
+        got = self.reply('{"verb": "v"}', table)
+        self.assertFalse(got['ok'])
+        self.assertEqual('BAD_ARGS', got['code'])
+
+    def test_non_object_args_is_bad_args(self):
+        got = self.reply('{"verb": "agent.hello", "args": [1, 2]}')
+        self.assertFalse(got['ok'])
+        self.assertEqual('BAD_ARGS', got['code'])
+
+    def test_a_run_that_raises_is_run_failed(self):
+        def _boom(a, t):
+            raise RuntimeError('boom')
+        table = {'v': (lambda a: {}, _boom)}
+        got = self.reply('{"verb": "v"}', table)
+        self.assertFalse(got['ok'])
+        self.assertEqual('RUN_FAILED', got['code'])
+
+    def test_main_returns_zero_for_a_good_verb(self):
+        with mock.patch('sys.stdin', io.StringIO('{"verb": "agent.hello"}')), \
+                mock.patch('sys.stdout', io.StringIO()):
+            self.assertEqual(0, agent.main())
+
+    def test_main_returns_nonzero_for_an_unknown_verb(self):
+        with mock.patch('sys.stdin', io.StringIO('{"verb": "rm.everything"}')), \
+                mock.patch('sys.stdout', io.StringIO()):
+            self.assertNotEqual(0, agent.main())
 
 
 if __name__ == '__main__':

@@ -5,10 +5,10 @@ Stateless: writes nothing, creates nothing, keeps nothing between calls.
 
 One JSON envelope in on stdin, one JSON object out on stdout. Stdin rather
 than argv on purpose - with a forced command, whatever the client typed
-arrives in the variable holding whatever the client typed, an
-attacker-shaped string. Reading the body on stdin means that variable is
-never parsed, never split, never expanded. It is ignored, and a test asserts
-this file does not name it.
+arrives in an env var set by sshd, as an attacker-shaped string. Reading
+the body on stdin means that variable is never read, never parsed, never
+split, never expanded. It is ignored, and a test asserts this file does not
+name it.
 
 The allowlist IS the authorization model. An unknown verb exits non-zero
 having run nothing.
@@ -20,9 +20,9 @@ import sys
 AGENT_VERSION = '2026.08.30'
 
 
-def hello(args):
+def hello(args, table):
     return {'version': AGENT_VERSION, 'hostname': socket.gethostname(),
-            'verbs': sorted(VERBS)}
+            'verbs': sorted(table)}
 
 
 def _no_args(args):
@@ -56,15 +56,24 @@ def handle(text, table):
         return _fail(verb, 'UNKNOWN_VERB', 'unknown verb')
 
     validate, run = table[verb]
-    args = envelope.get('args') or {}
-    if not isinstance(args, dict):
+    args = envelope.get('args')
+    if args is None:
+        args = {}
+    elif not isinstance(args, dict):
         return _fail(verb, 'BAD_ARGS', 'args is not an object')
     try:
         args = validate(args)
     except ValueError as exc:
         return _fail(verb, 'BAD_ARGS', str(exc))
+    except Exception as exc:                       # noqa: BLE001
+        # NOT just ValueError. A validator does real work - Task 2's device
+        # check reads /sys/block - and an OSError escaping here escapes main()
+        # too, so the peer answers a traceback on stderr and NOTHING on stdout.
+        # The manager then sees an unparseable empty reply instead of BAD_ARGS,
+        # which is the exact failure the envelope contract exists to prevent.
+        return _fail(verb, 'BAD_ARGS', '%s: %s' % (type(exc).__name__, exc))
     try:
-        return json.dumps({'ok': True, 'verb': verb, 'data': run(args)})
+        return json.dumps({'ok': True, 'verb': verb, 'data': run(args, table)})
     except Exception as exc:                       # noqa: BLE001
         return _fail(verb, 'RUN_FAILED', '%s: %s' % (type(exc).__name__, exc))
 

@@ -190,11 +190,22 @@ class TestRunCycle(ManagerCase):
 
 class TestAgentTransport(ManagerCase):
     def test_a_tier_1_node_polls_the_agent_too(self):
+        # Also pins the `continue` after the agent branch: drop it and the
+        # loop falls through into the GraphQL path too, sending the verb name
+        # as though it were a GraphQL document. That produces a SECOND Result
+        # for the same domain - a doomed GraphQL attempt - and whichever
+        # upsert runs last wins. `seen` alone cannot catch this, because the
+        # agent call still happens either way; only the domain's FINAL stored
+        # status tells the two paths apart.
         seen = []
         m = self.manager(nodes=[dict(NODE, tier=1)])
         m.exec_fn = lambda node, verb, args, timeout: seen.append(verb) or {}
         m.run_cycle('a1b2', collector.SLOW, 1000.0)
         self.assertIn('smart.attributes', seen)
+        self.assertEqual('ok', self.state('smart')['status'],
+                         'a fallthrough to the GraphQL path would overwrite this with '
+                         '"unknown", since good_post() does not recognise the verb name '
+                         'as a query')
 
     def test_a_tier_0_node_never_opens_an_ssh_connection(self):
         # The property that keeps a Tier 0 peer costing nothing. A regression
@@ -224,10 +235,31 @@ class TestAgentTransport(ManagerCase):
         self.assertEqual('ok', self.state('disks')['status'])
         self.assertEqual('unknown', self.state('smart')['status'])
 
+    def test_a_missing_graphql_key_does_not_blind_the_agent_lane(self):
+        # Spec 8: the ssh key and the GraphQL API key are separate credentials
+        # so that read access and act access revoke independently. The agent
+        # branch sits BEFORE the `if key is None` check for exactly this
+        # reason - moving it below would quietly couple the two credentials
+        # with the rest of this suite still green, since every other test
+        # here supplies a GraphQL key.
+        seen = []
+        m = self.manager(nodes=[dict(NODE, tier=1)])
+        m._read_key = lambda node_id: None
+        m.exec_fn = lambda node, verb, args, timeout: seen.append(verb) or {}
+        m.run_cycle('a1b2', collector.SLOW, 1000.0)
+        self.assertIn('smart.attributes', seen, 'a missing GraphQL key must not skip the agent call')
+        self.assertEqual('ok', self.state('smart')['status'])
+
     def test_the_node_is_not_downgraded_when_its_agent_goes_quiet(self):
         # Never auto-downgrade. A silent drop to Tier 0 loses SMART verdicts
         # while every card still reads healthy - the worst shape a defect here
         # can take, because the pane reports success and the data stops.
+        #
+        # Nothing in run_cycle writes `tier` today, so this cannot fail against
+        # the current code - it is a guard against a future change the spec
+        # explicitly warns against, not a live check of existing downgrade
+        # logic. A green run here is not evidence that downgrade was
+        # considered and rejected; it is evidence that it was never added.
         m = self.manager(nodes=[dict(NODE, tier=1)])
 
         def boom(node, verb, args, timeout):

@@ -45,16 +45,22 @@ function um_tier1_validate(array $post): array {
    installer after it was already generated must not rotate the key out from
    under a peer that already has the old public half in its authorized_keys.
    Returns the public key line, or null on failure. NEVER reads the private
-   half back - that file is written and left alone. */
-function um_tier1_keygen(string $node_id): ?string {
+   half back - that file is written and left alone.
+
+   $runner is injectable the way post_fn/exec_fn/run_fn already are elsewhere
+   in this codebase, defaulting to the real um_run_argv: the test suite must
+   not require ssh-keygen on the box that runs it (it is absent from the
+   php:8.2-cli image CI and the documented verification command both use). */
+function um_tier1_keygen(string $node_id, ?callable $runner = null): ?string {
+    $runner = $runner ?? 'um_run_argv';
     if (!um_safe_id($node_id)) return null;
     $priv = um_keys_dir() . '/' . $node_id . '.ssh';
     $pub = $priv . '.pub';
     if (!is_file($pub)) {
         if (!is_dir(um_keys_dir()) && !@mkdir(um_keys_dir(), 0700, true)) return null;
         @unlink($priv);
-        $result = um_run_argv(['ssh-keygen', '-t', 'ed25519', '-N', '', '-f', $priv,
-                                '-C', 'unraid-manager']);
+        $result = $runner(['ssh-keygen', '-t', 'ed25519', '-N', '', '-f', $priv,
+                            '-C', 'unraid-manager']);
         if (!$result['ok']) return null;
         @chmod($priv, 0600);
     }

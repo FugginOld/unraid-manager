@@ -91,8 +91,19 @@ class TestSshArgv(unittest.TestCase):
 
     def test_it_grants_the_peer_nothing(self):
         argv = ' '.join(self.argv())
-        for option in ('-N', 'ForwardAgent=no', 'ForwardX11=no'):
+        for option in ('ForwardAgent=no', 'ForwardX11=no'):
             self.assertIn(option, argv, option)
+
+    def test_no_dash_N_or_the_forced_command_never_runs(self):
+        # A forced command (authorized_keys `command="..."`) replaces the
+        # command on an exec-or-shell request. -N sends neither request, so
+        # sshd has nothing to replace: agent-exec never runs, and the call
+        # sits until our own timeout fires and reports a healthy, correctly
+        # configured peer as unreachable. -T stays: no pty, but still a shell
+        # request for the forced command to intercept.
+        argv = self.argv()
+        self.assertNotIn('-N', argv)
+        self.assertIn('-T', argv)
 
     def test_the_ssh_port_is_22_not_the_graphql_port(self):
         # node['port'] is the GraphQL API port. Sending ssh there talks to the

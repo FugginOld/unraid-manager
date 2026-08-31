@@ -12,7 +12,6 @@ SSH_PORT = 22
 # The handshake only. The overall call is bounded by the subprocess timeout,
 # which the caller sizes against the agent's BUDGET + RUN_TIMEOUT (75s).
 CONNECT_TIMEOUT = 10
-AGENT_PATH = '/boot/config/plugins/unraid-manager/agent-exec'
 
 
 class AgentUnreachable(Exception):
@@ -89,7 +88,11 @@ def ssh_argv(node, keyfile, known_hosts, timeout):
         '-o', 'ConnectTimeout=%d' % CONNECT_TIMEOUT,
         '-o', 'ForwardAgent=no',
         '-o', 'ForwardX11=no',
-        '-N', '-T',
+        # -T only, never -N. A forced command replaces the command on an exec or
+        # shell request; -N sends neither, so sshd has nothing to replace and
+        # agent-exec never runs. The call would then sit until our own timeout
+        # and report a healthy, correctly configured peer as unreachable.
+        '-T',
         # `--` before the destination: an address is data. Without it an address
         # beginning with a dash is read by ssh as an option, and ProxyCommand is
         # an option that runs a program.

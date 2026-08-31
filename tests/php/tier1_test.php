@@ -19,7 +19,25 @@ function check(string $name, bool $ok): void {
 $installer = um_tier1_installer('ssh-ed25519 AAAAC3Nz TESTKEY', base64_encode("print('hi')\n"));
 
 check('the installer pins the forced command',
-      str_contains($installer, 'command="/boot/config/plugins/unraid-manager/agent-exec"'));
+      str_contains($installer, 'command="/usr/bin/python3 /boot/config/plugins/unraid-manager/agent-exec"'));
+/* /boot is vfat mounted fmask=0177 (verified live on Golem, 2026-08-31): every
+   file on flash is forced to mode 0600 and the execute bit is UNSETTABLE, so
+   execve() on the script itself can never work - confirmed live, exit 126.
+   The forced command must therefore name an interpreter by absolute path
+   (never a bare 'python3', which depends on a login shell's PATH a forced
+   command does not get) with the script as an ARGUMENT to it, not the
+   executable. A substring check on 'python3' alone would pass just as well
+   for 'command="/boot/.../agent-exec python3"', which execve()s the flash
+   script first and never runs - so this parses out the exact command="..."
+   value and checks its shape, not just what tokens appear somewhere in it. */
+preg_match('/command="([^"]+)"/', $installer, $cmdMatch);
+check('the forced command names the interpreter by absolute path, script as its argument',
+      ($cmdMatch[1] ?? '') === '/usr/bin/python3 /boot/config/plugins/unraid-manager/agent-exec');
+/* chmod on a flash file is a silent no-op (fmask=0177 already fixed the mode
+   at 0600) - leaving one in would look like it does something and change
+   nothing, which is worse than no line at all. */
+check('the installer never chmods the agent script',
+      !preg_match('/\bchmod\b[^\n]*agent-exec/', $installer));
 check('the installer grants the key nothing else',
       str_contains($installer, 'no-pty') && str_contains($installer, 'no-port-forwarding')
       && str_contains($installer, 'no-agent-forwarding'));

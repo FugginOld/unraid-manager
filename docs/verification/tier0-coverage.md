@@ -149,6 +149,35 @@ seed fixtures were found to encode shapes the API cannot return.
     from `Title=` or the filename. `Icon=`/`Tag=` are the Utilities-submenu
     shape and are ignored by the top bar. Verified live 2026-08-26.
 
+17. **`/boot` is vfat mounted `fmask=0177,dmask=0077`: no file on flash can
+    ever be executed.** Every file on it gets mode 0600 regardless of any
+    `chmod` — the execute bit is UNSETTABLE, not merely left unset by a
+    missing `chmod`. `chmod 700` on a flash file is a silent no-op: it exits
+    0 and changes nothing. Confirmed live on Golem, 2026-08-31:
+
+    ```
+    /dev/sdaa1 /boot vfat rw,noatime,nodiratime,fmask=0177,dmask=0077,...
+    -rw------- 1 root root 7356 ... /boot/config/plugins/unraid-manager/agent-exec
+    /boot/.../agent-exec  ->  bash: Permission denied, exit=126
+    echo '{"verb":"agent.hello"}' | python3 /boot/.../agent-exec  ->  {"ok": true, ...} exit=0
+    ```
+
+    The script itself was correct throughout — piped through the interpreter
+    it answered every verb. Only direct `execve()` was impossible. This is
+    also why Unraid plugins install into tmpfs
+    (`/usr/local/emhttp/plugins/...`) and re-extract from the flash-resident
+    `.txz` at boot rather than running anything from `/boot` directly.
+    `api/tier1.php`'s forced command now names the interpreter by absolute
+    path (`/usr/bin/python3 <path>`) with the agent script as its argument,
+    rather than the script as the executable — a forced `command=` in
+    `authorized_keys` is `execve()`d exactly like anything else and hit the
+    same wall. `unraid-manager.plg`'s `chmod 700` on
+    `/boot/config/plugins/unraid-manager/keys` (a directory, governed by
+    `dmask` rather than `fmask`) already carried a comment anticipating
+    exactly this class of no-op and suppresses its error; this is the file
+    case, where the no-op is not harmless because a file either execve()s or
+    it does not.
+
 - Raven's `disks` 504 root cause (box-side issue, not a blocker).
 
 - **Does `dynamix.cfg` store `hot`/`max` in the display unit, or always in

@@ -21,7 +21,17 @@
 require_once __DIR__ . '/../include/common.php';
 
 const UM_TIER1_AGENT_SCRIPT = __DIR__ . '/../scripts/agent-exec';
-const UM_TIER1_FORCED_COMMAND = '/boot/config/plugins/unraid-manager/agent-exec';
+const UM_TIER1_AGENT_PATH = '/boot/config/plugins/unraid-manager/agent-exec';
+/* /boot is vfat mounted fmask=0177 (verified live on Golem, 2026-08-31; see
+   docs/verification/tier0-coverage.md): every file on flash is forced to
+   mode 0600 and the execute bit is UNSETTABLE, not merely unset. execve() on
+   a flash path can never work, so the forced command names the interpreter
+   by absolute path - never a bare `python3`, which would depend on the
+   login shell's PATH a forced command does not get - and the script is an
+   ARGUMENT to it, not the executable. Confirm the exact path against the
+   target Unraid version before changing it; it is not expected to move. */
+const UM_TIER1_PYTHON3 = '/usr/bin/python3';
+const UM_TIER1_FORCED_COMMAND = UM_TIER1_PYTHON3 . ' ' . UM_TIER1_AGENT_PATH;
 
 /* Refuses BEFORE anything touches a filesystem path built from the id: a
    traversal id ('../../etc/shadow') fails um_safe_id's hex-only shape and
@@ -138,7 +148,11 @@ function um_tier1_installer(string $pubkey, string $agentB64): string {
 set -euo pipefail
 mkdir -p /boot/config/plugins/unraid-manager
 echo '{$agentB64}' | base64 -d > /boot/config/plugins/unraid-manager/agent-exec
-chmod 700 /boot/config/plugins/unraid-manager/agent-exec
+# No chmod: /boot is vfat mounted fmask=0177, so every file on flash is
+# 0600 and the execute bit is unsettable. chmod here would appear to work
+# and change nothing. That is also why the forced command names the
+# interpreter rather than the script - execve on flash is impossible,
+# while READING the file is not.
 mkdir -p /root/.ssh
 printf '\\n%s\\n' '{$line}' >> /root/.ssh/authorized_keys
 echo 'Compare this fingerprint with what the manager records for this node:'

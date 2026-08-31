@@ -23,9 +23,12 @@ class TestSchema(HealthCase):
         self.assertEqual(0, self.conn.execute(
             'SELECT COUNT(*) FROM node_health').fetchone()[0])
 
-    def test_the_schema_version_moved_to_three(self):
-        # 2 -> 3 for the migration hook (widened CHECK); see TestMigration below.
-        self.assertEqual(3, self.conn.execute('PRAGMA user_version').fetchone()[0])
+    def test_the_schema_version_moved_to_four(self):
+        # 3 -> 4: node_state's CHECK widened for `unsupported`. Note the version
+        # bump alone does NOT widen it on an existing database - node_state is
+        # not a derived table, so migrate() rebuilds it explicitly. See
+        # TestMigration.
+        self.assertEqual(4, self.conn.execute('PRAGMA user_version').fetchone()[0])
 
     def test_an_invalid_state_is_refused_by_the_database(self):
         import sqlite3
@@ -57,6 +60,42 @@ class TestMigration(unittest.TestCase):
         # Would raise IntegrityError against the old constraint.
         store.upsert_health(conn, 'a1b2', 'overall', 'degraded', basis='capacity')
         self.assertEqual('degraded', store.read_health(conn, 'a1b2')['overall']['state'])
+        self.assertEqual(store.SCHEMA_VERSION,
+                         conn.execute('PRAGMA user_version').fetchone()[0])
+        conn.close()
+
+    def test_node_state_check_widens_without_losing_a_row(self):
+        # node_state is not derived - it holds retained payload history - so
+        # the CHECK widening for 'unsupported' cannot use the drop-and-recreate
+        # trick node_health gets above. This pins the rebuild: existing rows
+        # must survive by count AND by content, and the widened column must
+        # actually accept the new value afterward.
+        import sqlite3
+        directory = tempfile.mkdtemp()
+        path = os.path.join(directory, store.DB_FILENAME)
+        old = sqlite3.connect(path)
+        old.executescript(
+            "CREATE TABLE node_state(node_id TEXT NOT NULL, domain TEXT NOT NULL,"
+            " status TEXT NOT NULL CHECK(status IN ('ok','error','unknown')),"
+            " error TEXT, fetched_at TEXT, payload TEXT,"
+            " PRIMARY KEY(node_id, domain));"
+            "PRAGMA user_version=3;")
+        old.execute(
+            "INSERT INTO node_state(node_id,domain,status,fetched_at,payload) "
+            "VALUES(?,?,?,?,?)",
+            ('a1b2', 'info', 'ok', '2026-08-27T00:00:00Z', '{"hostname": "golem"}'))
+        old.commit()
+        old.close()
+
+        conn = store.connect(directory)
+        rows = conn.execute('SELECT * FROM node_state').fetchall()
+        self.assertEqual(1, len(rows))
+        self.assertEqual('{"hostname": "golem"}', rows[0]['payload'])
+
+        # Would raise IntegrityError against the old three-value constraint.
+        conn.execute("INSERT INTO node_state(node_id,domain,status) "
+                     "VALUES('a1b2','smart','unsupported')")
+        conn.commit()
         self.assertEqual(store.SCHEMA_VERSION,
                          conn.execute('PRAGMA user_version').fetchone()[0])
         conn.close()

@@ -8,8 +8,10 @@ domain and nothing else (constraint 1).
 Query text here is identical to scripts/capture_fixtures.py, and every field
 name is checked against docs/verification/graphql-schema-raven.json.
 """
+import json
 from collections import namedtuple
 
+import agentclient
 import gqlclient
 
 FAST = 'fast'
@@ -378,6 +380,68 @@ for _d in [
             'interfaceType serialNum } }', parse_disks),
     _domain('plugins', SLOW, '{ installedUnraidPlugins }', parse_plugins),
     _domain('logfiles', SLOW, '{ logFiles { name path size modifiedAt } }', parse_logfiles),
+]:
+    DOMAINS[_d.name] = _d
+
+
+# -- agent (Tier 1) ------------------------------------------------------
+
+def parse_smart(data):
+    """`data` is {device: raw smartctl JSON text, or None/'' if unreadable}.
+
+    A present-but-failing smartctl still exits non-zero on a healthy disk with
+    prefail attributes set (its exit status is a bitmask), so the agent can
+    send an EMPTY STRING for a disk it read just fine. That is the same "no
+    data" fact as None, not a different one, so both collapse to the same
+    null entry here rather than one becoming a value and the other vanishing.
+    A drive we truly could not read must still keep its key: dropping it would
+    make a dead disk look like a disk that was never installed.
+
+    serial_number and logical_unit_id are stripped before this payload goes
+    anywhere: plan section 12 forbids a raw serial in an API-bound payload,
+    and api/disks.php serves this dict straight to the browser.
+    """
+    disks = {}
+    for device, raw in (data or {}).items():
+        if not raw:
+            disks[device] = None
+            continue
+        doc = json.loads(raw)
+        doc.pop('serial_number', None)
+        doc.pop('logical_unit_id', None)
+        disks[device] = doc
+    return {'count': len(disks), 'disks': disks}
+
+
+def collect_agent(exec_fn, node, domain):
+    """Run one agent domain against one node. Never raises.
+
+    The same fail-closed rule as collect(): could not READ it is `unknown`,
+    the peer answered and failed is `error`. One extra status this path can
+    produce - `unsupported` - because an agent older than the manager is a
+    version gap, not a fault, and the two must not arrive looking alike.
+    """
+    try:
+        data = exec_fn(node, domain.query, {}, domain.timeout)
+    except agentclient.VerbUnsupported:
+        return Result(domain.name, 'unsupported', None,
+                      'this node needs a newer agent for %s' % domain.query, [])
+    except agentclient.AgentRefused as exc:
+        return Result(domain.name, 'error', None, str(exc), [])
+    except agentclient.AgentUnreachable as exc:
+        return Result(domain.name, 'unknown', None, str(exc), [])
+
+    try:
+        return Result(domain.name, 'ok', domain.parse(data), None, [])
+    except Exception as exc:                       # noqa: BLE001
+        return Result(domain.name, 'error', None,
+                      'could not read the %s reply: %s: %s'
+                      % (domain.name, type(exc).__name__, exc), [])
+
+
+for _d in [
+    _domain('smart', SLOW, 'smart.attributes', parse_smart,
+            transport=AGENT, min_tier=1),
 ]:
     DOMAINS[_d.name] = _d
 

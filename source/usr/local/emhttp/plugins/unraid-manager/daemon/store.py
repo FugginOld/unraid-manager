@@ -10,7 +10,7 @@ import os
 import posixpath
 import sqlite3
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 DB_FILENAME = 'manager.db'
 
 
@@ -25,7 +25,7 @@ CREATE TABLE IF NOT EXISTS nodes(
   added_at TEXT NOT NULL, last_seen TEXT);
 CREATE TABLE IF NOT EXISTS node_state(
   node_id TEXT NOT NULL, domain TEXT NOT NULL,
-  status TEXT NOT NULL CHECK(status IN ('ok','error','unknown')),
+  status TEXT NOT NULL CHECK(status IN ('ok','error','unknown','unsupported')),
   error TEXT, fetched_at TEXT, payload TEXT,
   PRIMARY KEY(node_id, domain));
 CREATE TABLE IF NOT EXISTS samples(
@@ -89,15 +89,37 @@ DERIVED_TABLES = ('node_health',)
 
 
 def migrate(conn, version):
-    """Bring an older database forward. Only derived tables are ever dropped.
+    """Bring an older database forward.
 
     CREATE TABLE IF NOT EXISTS is a no-op against an existing table, so a schema
-    change to node_health - widening its CHECK, adding a column - never reaches
-    a database created by an earlier version. Dropping and letting the schema
-    script recreate it is correct precisely because nothing in it is original data.
+    change to a derived table - widening its CHECK, adding a column - never
+    reaches a database created by an earlier version on its own. For a DERIVED
+    table that is fine: dropping and letting the schema script recreate it is
+    correct precisely because nothing in it is original data.
+
+    node_state is not derived - it holds retained payload history and must
+    never be dropped - so widening ITS CHECK (added 'unsupported' at version 4)
+    needs an actual rebuild instead: a new table under the new constraint, the
+    old rows copied in, the old table dropped, the new one renamed into place.
+    This is safe specifically because WIDENING a CHECK can never lose a row:
+    every existing row already satisfies the old, narrower constraint, which is
+    a subset of the new one, so every row still satisfies the new one too. A
+    migration that NARROWED a constraint would not get to make this argument.
     """
     if not version or version >= SCHEMA_VERSION:
         return
+    if version < 4:
+        exists = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='node_state'"
+        ).fetchone()
+        if exists:
+            conn.execute(
+                "CREATE TABLE node_state_new(node_id TEXT NOT NULL, domain TEXT NOT NULL, "
+                "status TEXT NOT NULL CHECK(status IN ('ok','error','unknown','unsupported')), "
+                "error TEXT, fetched_at TEXT, payload TEXT, PRIMARY KEY(node_id, domain))")
+            conn.execute("INSERT INTO node_state_new SELECT * FROM node_state")
+            conn.execute("DROP TABLE node_state")
+            conn.execute("ALTER TABLE node_state_new RENAME TO node_state")
     for table in DERIVED_TABLES:
         conn.execute('DROP TABLE IF EXISTS %s' % table)
 
@@ -126,7 +148,7 @@ def connect(db_dir):
     return conn
 
 
-VALID_STATUS = ('ok', 'error', 'unknown')
+VALID_STATUS = ('ok', 'error', 'unknown', 'unsupported')
 
 _NODE_FIELDS = ('name', 'address', 'port', 'tier', 'enabled')
 

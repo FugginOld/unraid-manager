@@ -1,5 +1,6 @@
 import io
 import json
+import os
 import unittest
 from unittest import mock
 
@@ -128,6 +129,90 @@ class TestEnvelope(unittest.TestCase):
         with mock.patch('sys.stdin', io.StringIO('{"verb": "rm.everything"}')), \
                 mock.patch('sys.stdout', io.StringIO()):
             self.assertNotEqual(0, agent.main())
+
+
+class TestReadVerbs(unittest.TestCase):
+    def reply(self, text):
+        return json.loads(agent.handle(text, agent.VERBS))
+
+    def _patch(self, name, value):
+        """Set a module attribute and restore it after the test, whatever happens."""
+        original = getattr(agent, name)
+        setattr(agent, name, value)
+        self.addCleanup(setattr, agent, name, original)
+
+    def test_a_device_that_is_not_ours_is_refused(self):
+        # Validated against the agent's OWN enumeration, not a pattern. A regex
+        # still admits a device that is not there, and smartctl on it hangs.
+        self._patch('devices', lambda: ['/dev/sda'])
+        got = self.reply('{"verb": "smart.attributes",'
+                         ' "args": {"devices": ["/dev/nope"]}}')
+        self.assertFalse(got['ok'])
+        self.assertEqual('BAD_ARGS', got['code'])
+
+    def test_a_traversal_argument_is_refused_the_same_way(self):
+        self._patch('devices', lambda: ['/dev/sda'])
+        for bad in ('/etc/shadow', '../../etc/shadow', '/dev/sda; rm -rf /',
+                    '/dev/sda\n/dev/sdb'):
+            got = self.reply(json.dumps({'verb': 'smart.attributes',
+                                         'args': {'devices': [bad]}}))
+            self.assertFalse(got['ok'], bad)
+            self.assertEqual('BAD_ARGS', got['code'], bad)
+
+    def test_no_devices_argument_means_all_of_them(self):
+        # One call per node per cycle, never one per disk: Golem has 22, and a
+        # per-device verb would open 22 SSH connections every slow cycle.
+        self._patch('devices', lambda: ['/dev/sda', '/dev/sdb'])
+        self._patch('_run', lambda argv: 'ran ' + argv[-1])
+        got = self.reply('{"verb": "smart.attributes"}')
+        self.assertEqual(['/dev/sda', '/dev/sdb'], sorted(got['data']))
+
+    def test_one_unreadable_disk_does_not_lose_the_others(self):
+        # Fail closed per device, never per node: a single dead drive must not
+        # blank the SMART view of every healthy one beside it.
+        self._patch('devices', lambda: ['/dev/sda', '/dev/sdb'])
+
+        def boom(argv):
+            if argv[-1] == '/dev/sda':
+                raise OSError('I/O error')
+            return 'fine'
+        self._patch('_run', boom)
+        got = self.reply('{"verb": "smart.attributes"}')
+        self.assertTrue(got['ok'])
+        self.assertIsNone(got['data']['/dev/sda'])
+        self.assertEqual('fine', got['data']['/dev/sdb'])
+
+    def test_mounts_are_returned_raw(self):
+        # Raw on purpose: a parse bug in the agent costs twenty paste sessions,
+        # in the manager it costs one file patch.
+        #
+        # Pointed at a temp file, never the host's /proc: no test may read the
+        # real one, and on the dev machine it does not exist at all.
+        import tempfile
+        with tempfile.NamedTemporaryFile('w', suffix='.mounts', delete=False,
+                                         newline='') as fh:
+            fh.write('/dev/sda1 /mnt/disk1 xfs rw 0 0\n')
+            path = fh.name
+        self.addCleanup(os.unlink, path)
+        self._patch('PROC_MOUNTS', path)
+
+        got = self.reply('{"verb": "mounts.list"}')
+        self.assertTrue(got['ok'])
+        self.assertIn('/mnt/disk1', got['data']['proc_mounts'])
+
+    def test_every_verb_is_declared_by_hello(self):
+        got = self.reply('{"verb": "agent.hello"}')
+        for verb in ('smart.attributes', 'mounts.list', 'pool.balance'):
+            self.assertIn(verb, got['data']['verbs'])
+
+    def test_no_verb_can_write(self):
+        # The structural guarantee of P2a, asserted on the agent side. Task 5
+        # asserts the same thing on the manager's domain table.
+        with open(context.AGENT, encoding='utf-8') as fh:
+            source = fh.read()
+        for forbidden in ('umount', 'mkfs', 'rm ', 'shutdown', 'reboot',
+                          "'w'", '"w"', 'os.remove', 'shutil'):
+            self.assertNotIn(forbidden, source, forbidden)
 
 
 if __name__ == '__main__':

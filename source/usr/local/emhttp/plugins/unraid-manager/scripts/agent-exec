@@ -14,10 +14,20 @@ The allowlist IS the authorization model. An unknown verb exits non-zero
 having run nothing.
 """
 import json
+import os
 import socket
+import subprocess
 import sys
 
 AGENT_VERSION = '2026.08.30'
+
+RUN_TIMEOUT = 30
+
+# Module-level names so a test can point them somewhere real - the same idiom as
+# managerd.POOL_MARKER. Without them these verbs read the host's own /proc and
+# /sys, which no test may touch and which do not exist on the dev machine.
+PROC_MOUNTS = '/proc/mounts'
+SYS_BLOCK = '/sys/block'
 
 
 def hello(args, table):
@@ -32,8 +42,80 @@ def _no_args(args):
     return {}
 
 
+def _run(argv):
+    """Run one command as an argv list. Never a shell, never a string."""
+    done = subprocess.run(argv, capture_output=True, text=True, timeout=RUN_TIMEOUT)
+    return done.stdout
+
+
+def devices():
+    """This box's block devices, from the kernel rather than from a guess."""
+    return sorted('/dev/' + name for name in os.listdir(SYS_BLOCK)
+                  if name.startswith(('sd', 'nvme', 'hd')))
+
+
+def _validate_devices(args):
+    """Refuse anything that is not one of OUR devices.
+
+    A pattern like ^/dev/sd[a-z]+$ still admits a device that is not there, and
+    smartctl on it blocks until the timeout. Asking "is this one of mine" has no
+    clever-input case: the answer comes from /sys/block, not from the caller.
+    """
+    extra = set(args) - {'devices'}
+    if extra:
+        raise ValueError('unexpected arguments: %s' % ', '.join(sorted(extra)))
+    wanted = args.get('devices')
+    mine = devices()
+    if wanted is None:
+        return {'devices': mine}
+    if not isinstance(wanted, list):
+        raise ValueError('devices must be a list')
+    unknown = [d for d in wanted if d not in mine]
+    if unknown:
+        raise ValueError('not a device on this node: %s' % ', '.join(map(str, unknown)))
+    return {'devices': wanted}
+
+
+def smart_attributes(args, table):
+    out = {}
+    for device in args['devices']:
+        try:
+            out[device] = _run(['smartctl', '--json=c', '-a', device])
+        except Exception:                          # noqa: BLE001
+            # None, never '' - unreadable is not the same fact as empty, and a
+            # single dead drive must not blank every healthy one beside it.
+            out[device] = None
+    return out
+
+
+def mounts_list(args, table):
+    with open(PROC_MOUNTS, encoding='utf-8') as fh:
+        return {'proc_mounts': fh.read()}
+
+
+def pool_balance(args, table):
+    btrfs = {}
+    for line in mounts_list({}, table)['proc_mounts'].splitlines():
+        parts = line.split()
+        if len(parts) > 2 and parts[2] == 'btrfs':
+            try:
+                btrfs[parts[1]] = _run(['btrfs', 'filesystem', 'usage', parts[1]])
+            except Exception:                      # noqa: BLE001
+                btrfs[parts[1]] = None
+    try:
+        zfs = _run(['zpool', 'status'])
+    except Exception:                              # noqa: BLE001
+        # No zpool binary is not an error - it is a box without ZFS. None says
+        # "we did not read it", which is the honest answer either way.
+        zfs = None
+    return {'btrfs': btrfs, 'zfs': zfs}
+
+
 VERBS = {
     'agent.hello': (_no_args, hello),
+    'smart.attributes': (_validate_devices, smart_attributes),
+    'mounts.list': (_no_args, mounts_list),
+    'pool.balance': (_no_args, pool_balance),
 }
 
 

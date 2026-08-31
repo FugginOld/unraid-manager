@@ -6,6 +6,7 @@ import threading
 import unittest
 
 import context
+import agentclient
 import collector
 import config          # noqa: F401
 import gqlclient
@@ -185,6 +186,57 @@ class TestRunCycle(ManagerCase):
         fails = self.conn.execute(
             "SELECT COUNT(*) FROM events WHERE kind='poll_fail'").fetchone()[0]
         self.assertEqual(1, fails, 'a node down for an hour must not write 120 journal rows')
+
+
+class TestAgentTransport(ManagerCase):
+    def test_a_tier_1_node_polls_the_agent_too(self):
+        seen = []
+        m = self.manager(nodes=[dict(NODE, tier=1)])
+        m.exec_fn = lambda node, verb, args, timeout: seen.append(verb) or {}
+        m.run_cycle('a1b2', collector.SLOW, 1000.0)
+        self.assertIn('smart.attributes', seen)
+
+    def test_a_tier_0_node_never_opens_an_ssh_connection(self):
+        # The property that keeps a Tier 0 peer costing nothing. A regression
+        # here would have the manager ssh-ing at boxes that never agreed to it.
+        seen = []
+        m = self.manager(nodes=[dict(NODE, tier=0)])
+        m.exec_fn = lambda node, verb, args, timeout: seen.append(verb) or {}
+        m.run_cycle('a1b2', collector.SLOW, 1000.0)
+        self.assertEqual([], seen)
+
+    def test_a_missing_ssh_key_does_not_take_the_graphql_lane_down(self):
+        # Per-domain isolation, on the new path: a Tier 1 node with no key on
+        # file must still report everything GraphQL can tell us.
+        disks_data = context.fixture_json('seed/disks.json')['data']
+
+        def slow_post_fn(address, port, key, query, timeout):
+            if query == collector.DOMAINS['disks'].query:
+                return disks_data
+            raise gqlclient.TransportError('connection refused')
+
+        m = self.manager(post_fn=slow_post_fn, nodes=[dict(NODE, tier=1)])
+
+        def boom(node, verb, args, timeout):
+            raise agentclient.AgentUnreachable('no key on file')
+        m.exec_fn = boom
+        m.run_cycle('a1b2', collector.SLOW, 1000.0)
+        self.assertEqual('ok', self.state('disks')['status'])
+        self.assertEqual('unknown', self.state('smart')['status'])
+
+    def test_the_node_is_not_downgraded_when_its_agent_goes_quiet(self):
+        # Never auto-downgrade. A silent drop to Tier 0 loses SMART verdicts
+        # while every card still reads healthy - the worst shape a defect here
+        # can take, because the pane reports success and the data stops.
+        m = self.manager(nodes=[dict(NODE, tier=1)])
+
+        def boom(node, verb, args, timeout):
+            raise agentclient.AgentUnreachable('ssh exited 255')
+        m.exec_fn = boom
+        m.run_cycle('a1b2', collector.SLOW, 1000.0)
+        row = self.conn.execute('SELECT tier FROM nodes WHERE id=?',
+                                ('a1b2',)).fetchone()
+        self.assertEqual(1, row['tier'])
 
 
 class TestThreading(ManagerCase):

@@ -6,6 +6,7 @@ lives under `if __name__ == '__main__'`.
 """
 
 import datetime
+import functools
 import json
 import logging
 import logging.handlers
@@ -18,6 +19,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 
+import agentclient
 import collector
 import config
 import ctl
@@ -238,12 +240,19 @@ def _publish_over(sock_path):
 class Manager(object):
     """Owns the database connection, the schedule and the worker pool."""
 
-    def __init__(self, conn, cfg, keys_dir=config.KEYS_DIR, post_fn=None, publish_fn=None):
+    def __init__(self, conn, cfg, keys_dir=config.KEYS_DIR, post_fn=None, publish_fn=None,
+                 exec_fn=None):
         check_db_path_is_durable(cfg.get('db_path'))
         self.conn = conn
         self.cfg = cfg
         self.keys_dir = keys_dir
         self.post_fn = post_fn or gqlclient.post
+        # Bound by keyword, not position: exec_agent takes SIX parameters
+        # (node, verb, args, timeout, keys_dir, run_fn) but collect_agent calls
+        # exec_fn with only the first four. Binding keys_dir by name means a
+        # reordering of exec_agent's parameter list cannot silently line up
+        # the wrong value with this slot the way a positional partial would.
+        self.exec_fn = exec_fn or functools.partial(agentclient.exec_agent, keys_dir=self.keys_dir)
         self.publish_fn = publish_fn
         self.publishing = publish_fn is not None
         self.scheduler = Scheduler(cfg['poll_fast'], cfg['poll_slow'])
@@ -344,6 +353,9 @@ class Manager(object):
 
         results = []
         for domain in collector.domains_for_lane(lane, node.get('tier', 0)):
+            if domain.transport == collector.AGENT:
+                results.append(collector.collect_agent(self.exec_fn, target, domain))
+                continue
             if key is None:
                 results.append(collector.Result(
                     domain.name, 'unknown', None,

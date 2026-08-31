@@ -111,10 +111,18 @@ $parityQuery = '';
 if (preg_match("/_domain\('parity'.*?parse_parity\)/s", $collector, $m)) $parityQuery = $m[0];
 check('absent: the parity query does not ask for errors',
       $parityQuery !== '' && !str_contains($parityQuery, 'status errors'));
+/* py_code_only, not the raw file - these two pins are about what we SEND, and
+   scanning the prose that explains them is the exact failure this file's own
+   header records ("three of these originally matched the very comments that
+   describe the guard"). Both scanned raw text until 2026-08-31, when a comment
+   reading "the no-mutation assertion included" turned the first one red on a
+   commit that added no query at all. The helper was already here, one check
+   above; it just was not being used. */
+$collectorCode = py_code_only($collector);
 check('absent: no mutation appears in any domain query',
-      !preg_match('/\bmutation\b/i', $collector));
+      !preg_match('/\bmutation\b/i', $collectorCode));
 check('absent: no introspection query',
-      !str_contains($collector, '__schema') && !str_contains($collector, '__type'));
+      !str_contains($collectorCode, '__schema') && !str_contains($collectorCode, '__type'));
 /* Globbed, not named: a read path added after this pin (health.php was
    exactly the kind of code that broke on php-fpm) must be covered without
    anyone remembering to list it here. */

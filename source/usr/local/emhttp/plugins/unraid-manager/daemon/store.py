@@ -250,6 +250,20 @@ def touch_last_seen(conn, node_id, ts=None):
     conn.commit()
 
 
+def set_tier(conn, node_id, tier):
+    """Direct write, not routed through sync_registry: a node that just
+    answered agent.hello for the first time must poll as Tier 1 on its very
+    next cycle, not wait for a reload that flash has not been told to cause.
+
+    sync_registry() still treats flash's nodes.cfg as authoritative for this
+    column, so a later reload triggered before nodes.cfg also learns tier=1
+    (an operator saving Settings, say) will fold this value back to whatever
+    flash says. Closing that gap is outside this task; see task-8-report.md.
+    """
+    conn.execute('UPDATE nodes SET tier=? WHERE id=?', (tier, node_id))
+    conn.commit()
+
+
 def prune(conn, now=None, sample_days=7, event_cap=10000, vacuum=False):
     """Retention, per spec section 4. Runs daily from cron; VACUUM weekly.
 

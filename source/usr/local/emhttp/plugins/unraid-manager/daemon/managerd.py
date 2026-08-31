@@ -628,6 +628,31 @@ class Manager(object):
             address, port, key = args['address'], args['port'], args.get('key')
         return collector.probe(self.post_fn, address, int(port), key)
 
+    def _agent_hello(self, args):
+        """Test connection, for enrollment. Runs OUTSIDE the lock: this is an
+        ssh round trip that can legitimately take up to 30s, and holding the
+        lock across it would stall every other ctl request and worker cycle
+        behind one slow or dead peer -- the same reason _test_node does not
+        take it either.
+
+        Nothing is persisted on a failed test: there must be no state meaning
+        'probably Tier 1' (spec section 4). Only a real reply writes tier=1
+        and logs the enrollment.
+        """
+        node_id = args.get('node_id')
+        node = self._node(node_id)
+        if node is None:
+            raise ValueError('no such node: %s' % node_id)
+        try:
+            data = self.exec_fn(node, 'agent.hello', {}, 30)
+        except Exception as exc:                       # noqa: BLE001
+            return {'ok': False, 'error': str(exc)}
+        with self._lock:
+            store.set_tier(self.conn, node_id, 1)
+            store.log_event(self.conn, 'enroll', 'agent verified, node is now Tier 1',
+                             node_id=node_id)
+        return {'ok': True, 'version': data.get('version'), 'verbs': data.get('verbs')}
+
     def _prune(self, args):
         # Also the listener thread. A VACUUM can hold this for minutes and will
         # stall the poll loop behind it; that is the right trade for a single
@@ -643,6 +668,7 @@ class Manager(object):
                 'scheduled': self.scheduler.poll_now(args.get('node_id')) or True},
             'prune': self._prune,
             'test_node': self._test_node,
+            'agent_hello': self._agent_hello,
         }
 
 

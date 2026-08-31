@@ -96,6 +96,33 @@ curl -fsSL https://raw.githubusercontent.com/FugginOld/unraid-manager/$S/source/
 The peer's API port is the one `unraid-api` listens on, not the webGUI port —
 it differs per box.
 
+### Enroll a node as Tier 1 (optional)
+
+Tier 1 adds ssh-backed domains (SMART, mounts) on top of the Tier 0 read.
+There is no button for this yet — it is exercised through `tier1.php` until
+the pane wires it up:
+
+1. **Generate and view the installer.**
+   ```
+   POST /plugins/unraid-manager/api/tier1.php
+   action=prepare&node_id=<the node's id>
+   ```
+   The first call generates an ed25519 keypair for that node (private half at
+   `keys/<node_id>.ssh`, `0600`, never returned by anything); later calls
+   reuse it. The response is one shell command containing the public key and
+   the agent, base64-embedded — nothing is fetched over the network.
+2. **Paste it on the peer**, as root. It writes `agent-exec` under
+   `/boot/config/plugins/unraid-manager/`, appends one forced-command line to
+   `/root/.ssh/authorized_keys` (append only — that file already holds the
+   operator's own keys), and prints the peer's host key fingerprint.
+3. **Test the connection.**
+   ```
+   POST /plugins/unraid-manager/api/tier1.php
+   action=test&node_id=<the node's id>
+   ```
+   This is the only thing that persists `tier=1` — on a real reply, not
+   before. A failed test leaves the node at Tier 0 and writes nothing.
+
 ## The rc script
 
 **It is not on `PATH`.** `rc.unraid-manager` alone gives

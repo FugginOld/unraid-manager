@@ -141,6 +141,28 @@ function um_safe_id(string $id): bool {
     return $id !== '' && (bool) preg_match('/^[0-9a-f]{8,64}$/', $id);
 }
 
+/* ── subprocess ───────────────────────────────────────────────────────────── */
+
+/* proc_open with the command given as an array (not a string) runs the binary
+   directly - no /bin/sh is involved, so no argument can be read as a shell
+   metacharacter. Every caller that needs ssh-keygen or its kin goes through
+   this rather than exec()/shell_exec() with a hand-built string. */
+function um_run_argv(array $argv, ?string $input = null): array {
+    $spec = [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']];
+    $proc = @proc_open($argv, $spec, $pipes);
+    if (!is_resource($proc)) {
+        return ['ok' => false, 'code' => -1, 'out' => '', 'err' => 'could not start process'];
+    }
+    fwrite($pipes[0], $input ?? '');
+    fclose($pipes[0]);
+    $out = stream_get_contents($pipes[1]);
+    $err = stream_get_contents($pipes[2]);
+    fclose($pipes[1]);
+    fclose($pipes[2]);
+    $code = proc_close($proc);
+    return ['ok' => $code === 0, 'code' => $code, 'out' => (string) $out, 'err' => (string) $err];
+}
+
 /* ── ini ──────────────────────────────────────────────────────────────────── */
 
 function um_parse_ini(string $text): array {

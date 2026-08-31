@@ -507,7 +507,7 @@ class TestStatusAndHandlers(ManagerCase):
         self.assertIn('uptime', st)
 
     def test_handlers_cover_the_documented_commands(self):
-        self.assertEqual({'status', 'poll_now', 'test_node', 'reload', 'prune'},
+        self.assertEqual({'status', 'poll_now', 'test_node', 'reload', 'prune', 'agent_hello'},
                          set(self.manager().handlers()))
 
     def test_test_node_handler_returns_a_probe_report_and_no_key(self):
@@ -540,6 +540,56 @@ class TestStatusAndHandlers(ManagerCase):
         m._read_key = lambda node_id: None
         with self.assertRaises(ValueError):
             m.handlers()['test_node']({'node_id': 'a1b2'})
+
+
+class TestAgentHello(ManagerCase):
+    def test_a_real_reply_persists_tier_1_and_logs_an_enrollment(self):
+        m = self.manager(nodes=[dict(NODE, tier=0)])
+        # reload() (run by self.manager()) already logged its own 'enroll' row
+        # for a brand new node id, so counting rows of kind 'enroll' before
+        # calling the handler is what makes this test able to tell "the
+        # handler logged one" apart from "the registry sync already did" -
+        # otherwise a version of _agent_hello with no logging of its own
+        # would still pass by pointing at that earlier row.
+        before = self.conn.execute(
+            "SELECT COUNT(*) FROM events WHERE node_id=? AND kind='enroll'",
+            ('a1b2',)).fetchone()[0]
+        m.exec_fn = lambda node, verb, args, timeout: {'version': '1.2', 'verbs': ['agent.hello']}
+        result = m.handlers()['agent_hello']({'node_id': 'a1b2'})
+        self.assertEqual({'ok': True, 'version': '1.2', 'verbs': ['agent.hello']}, result)
+        row = self.conn.execute('SELECT tier FROM nodes WHERE id=?', ('a1b2',)).fetchone()
+        self.assertEqual(1, row['tier'])
+        after = self.conn.execute(
+            "SELECT COUNT(*) FROM events WHERE node_id=? AND kind='enroll'",
+            ('a1b2',)).fetchone()[0]
+        self.assertEqual(before + 1, after)
+
+    def test_an_unreachable_agent_persists_nothing(self):
+        # There must be no state meaning "probably Tier 1" (spec section 4).
+        # This is the mutation that matters: a version of _agent_hello that
+        # wrote tier=1 unconditionally would still return ok:False here and
+        # only this row/event check would catch it.
+        m = self.manager(nodes=[dict(NODE, tier=0)])
+        # reload() (run by self.manager()) already logged its own 'enroll' row
+        # for a brand new node id - count from here so this test isolates
+        # what _agent_hello itself does, not what got the node here.
+        before = self.conn.execute(
+            'SELECT COUNT(*) FROM events WHERE node_id=?', ('a1b2',)).fetchone()[0]
+
+        def boom(node, verb, args, timeout):
+            raise agentclient.AgentUnreachable('no route to host')
+        m.exec_fn = boom
+        result = m.handlers()['agent_hello']({'node_id': 'a1b2'})
+        self.assertFalse(result['ok'])
+        row = self.conn.execute('SELECT tier FROM nodes WHERE id=?', ('a1b2',)).fetchone()
+        self.assertEqual(0, row['tier'])
+        self.assertEqual(before, self.conn.execute(
+            'SELECT COUNT(*) FROM events WHERE node_id=?', ('a1b2',)).fetchone()[0])
+
+    def test_agent_hello_for_an_unknown_node_is_refused(self):
+        m = self.manager()
+        with self.assertRaises(ValueError):
+            m.handlers()['agent_hello']({'node_id': 'nosuch'})
 
 
 class TestLogging(unittest.TestCase):

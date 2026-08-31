@@ -30,8 +30,14 @@ RUN_TIMEOUT = 30
 # and it does so precisely on the node with sick disks, which is the node whose
 # SMART data is worth having. Past the budget the remaining devices report None,
 # the same "could not read it" fact a per-device failure already produces.
-# INVARIANT: the transport timeout in Task 4 must EXCEED this.
-BUDGET = 60
+# INVARIANT: worst case is BUDGET + RUN_TIMEOUT, because the deadline is tested
+# BEFORE a device starts and the last one admitted can still burn a full
+# RUN_TIMEOUT. That total has to fit INSIDE the transport timeout with headroom.
+# These verbs run on the slow lane, whose SLOW_TIMEOUT is 90, so 60 + 30 would
+# have been exactly 90 - cutting the enumeration mid-flight on precisely the node
+# with slow disks, which is the failure the budget exists to prevent. 45 + 30
+# leaves 15s of headroom.
+BUDGET = 45
 
 # Module-level names so a test can point them somewhere real - the same idiom as
 # managerd.POOL_MARKER. Without them these verbs read the host's own /proc and

@@ -9,7 +9,7 @@ acting on a "simplify this" finding.
 Both suites must pass before anything is committed.
 
 ```bash
-python -m unittest discover -s tests/python        # 210 tests
+python -m unittest discover -s tests/python        # 399 tests
 bash tests/php/run.sh                              # 9 suites
 ```
 

@@ -180,7 +180,7 @@ arranged to protect.
 | Unknown verb refused, nothing run | ✅ `UNKNOWN_VERB` for `rm.everything` |
 | Bad device refused by enumeration | ✅ `BAD_ARGS: not a device on this node: /dev/nope` |
 | Real SMART data over the agent | ✅ full `smartctl --json` for `/dev/sda` |
-| Survives a peer reboot | ⬜ not yet exercised — see below |
+| Survives a peer reboot | ✅ verified 2026-08-31 22:50, after a real reboot of Golem |
 
 ### Two design decisions the box overturned
 
@@ -227,9 +227,29 @@ It also means Golem had **no root key at all** before this — its
 `authorized_keys` was a single blank line, and the 746 bytes recorded on
 2026-08-30 was Raven's file, not Golem's.
 
-### Still open
+### Reboot: verified
 
-The reboot test. `/root/.ssh` resolving onto flash makes persistence structural
-rather than hopeful, but this phase has twice been wrong about something that
-looked obvious — `-N` and `chmod 700` both — so it is recorded as **unverified**,
-not as proven by inference.
+Golem was rebooted and `agent.hello` answered unchanged. Persistence is proven
+rather than inferred — both the `authorized_keys` line and the agent survive on
+flash, with no boot hook and no plugin.
+
+### The budget holds at real scale, with 3.4x headroom
+
+One call, every device, after the reboot:
+
+```
+exit=0 elapsed=13s
+devices enumerated: 37   read: 37   reported unread (None): 0
+```
+
+`BUDGET = 45` was sized against "22 disks"; Golem actually presents **37 block
+devices**, and the whole enumeration finished in **13 seconds**. Nothing hit the
+deadline. Worth recording that the first value tried was 60, which with
+`RUN_TIMEOUT = 30` would have been exactly `SLOW_TIMEOUT` — the enumeration would
+have been cut off on precisely the node with slow disks. The measured 13s says
+the corrected value is not merely safe but generous.
+
+**And a comparison that reframes the slow lane:** the agent reads full SMART for
+37 devices in 13s. Tier 0's `Query.disks` takes 15.4s on this same box for less
+data, and 504s intermittently (finding 2). The Tier 1 path is *faster than the
+official API*, which was not an argument anyone made for building it.

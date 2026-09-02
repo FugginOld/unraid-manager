@@ -355,8 +355,18 @@ git commit -m "feat(smart): one place where a missing key becomes None"
 | advisory | `grown defect count not reported` |
 | advisory | `pending defect count not reported` |
 | advisory | `error counters not reported` |
+| advisory | `uncorrected error counters not reported` |
+| advisory | `retry counters not reported` |
 | advisory | `no self-test on record` |
 | advisory | `temperature not reported` |
+
+The last two advisories were added during Task 2's review. `error counters not
+reported` covers a drive that omits `scsi_error_counter_log` entirely; the two
+asymmetric cases — a drive reporting `total_uncorrected_errors` but not
+`errors_corrected_by_rereads_rewrites`, or the reverse — each get their own
+line, because either one silently disables a rule and the operator should be
+told which. Tasks 4 and 5 render `reasons` as an opaque list, so a new string
+is additive and breaks nothing downstream.
 
 - [ ] **Step 1: Write the failing tests**
 

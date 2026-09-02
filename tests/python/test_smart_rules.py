@@ -276,5 +276,40 @@ class TestErrorCounterAdvisories(unittest.TestCase):
         self.assertNotIn('error counters not reported', got['reasons'])
 
 
+class TestNegativeAndFloatEdgeCases(unittest.TestCase):
+    # Round 2 converted the two lane loops to a None-guarded ">  0" check but
+    # left the sibling grown/pending truthiness checks bare - a negative lane
+    # counter was refused while a negative defect count was not. This class
+    # pins both the fix and the float-trip-point regression from the same
+    # round in one place.
+
+    def test_a_float_trip_point_still_formats_as_an_integer(self):
+        # drive_trip: 60.0 is now an admitted number (Important B). The FAIL
+        # reason must still read "(60 C)", not "(60.0 C)", or it drifts off
+        # the interface string Tasks 4/5 consume verbatim.
+        def flip(d):
+            d['temperature'] = {'current': 60, 'drive_trip': 60.0}
+        got = smart.verdict(sda(flip))
+        self.assertEqual('FAIL', got['verdict'])
+        self.assertEqual("at the drive's own trip point (60 C)",
+                         got['reasons'][0])
+
+    def test_negative_counters_produce_no_line_anywhere(self):
+        # All four sites at once: a lane in uncorrected, a lane in rereads,
+        # grown_defects, and pending_defects. If either of the last two still
+        # used bare truthiness, this drive would come back WATCH.
+        def flip(d):
+            d['scsi_error_counter_log']['read']['total_uncorrected_errors'] = -2
+            d['scsi_error_counter_log']['write'][
+                'errors_corrected_by_rereads_rewrites'] = -3
+            d.update(scsi_grown_defect_list=-1)
+            d.update(scsi_pending_defects={'count': -1})
+        got = smart.verdict(sda(flip))
+        self.assertEqual('OK', got['verdict'])
+        for text in ('uncorrected read errors', 'operations needing a retry',
+                     'grown defects', 'sectors pending reallocation'):
+            self.assertFalse(any(text in r for r in got['reasons']), text)
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -147,10 +147,12 @@ def _fail_reasons(summary):
 def _watch_reasons(summary):
     """Conditions worth an operator's attention before they are a failure."""
     out = []
-    if summary['grown_defects']:
-        out.append('grown defects: %d' % summary['grown_defects'])
-    if summary['pending_defects']:
-        out.append('sectors pending reallocation: %d' % summary['pending_defects'])
+    grown = summary['grown_defects']
+    if grown is not None and grown > 0:
+        out.append('grown defects: %d' % grown)
+    pending = summary['pending_defects']
+    if pending is not None and pending > 0:
+        out.append('sectors pending reallocation: %d' % pending)
     for lane in LANES:
         count = summary['rereads'][lane]
         if count is not None and count > 0:

@@ -23,7 +23,9 @@ $db->exec('CREATE TABLE node_state(node_id TEXT, domain TEXT, status TEXT, error
    drops ORDER BY name, SQLite falls back to rowid order and the check on
    $out['disks'][0] below flips. */
 $db->exec("INSERT INTO nodes VALUES('b2c3','Raven','1.2.3.5',1,0,1,'x','y','SENTINEL-KEY-NOT-FOR-EXPORT')");
-$db->exec("INSERT INTO nodes VALUES('a1b2','Golem','1.2.3.4',1,0,1,'x','y','SENTINEL-KEY-NOT-FOR-EXPORT')");
+/* Golem is the Tier 1 node: it runs the agent, so it has a smart payload.
+   Raven, Ash and Bramble stay at tier 0 and correctly have none. */
+$db->exec("INSERT INTO nodes VALUES('a1b2','Golem','1.2.3.4',1,1,1,'x','y','SENTINEL-KEY-NOT-FOR-EXPORT')");
 /* Ash: disks 504'd on the very first poll - no prior row, so store.py leaves
    payload and fetched_at NULL. Bramble: enrolled, never polled at all - no
    disks row in node_state whatsoever. */
@@ -51,6 +53,19 @@ $array = json_encode(['state' => 'STARTED',
                  'numErrors' => 2, 'status' => 'DISK_OK', 'size' => 18000207600128],
                 ['slot' => 'disk2', 'device' => 'sdd', 'temp' => 40,
                  'numErrors' => 0, 'status' => 'DISK_DSBL', 'size' => 4000787030016]]]);
+
+/* parse_smart's shape after the verdict chain: the verdict, its reasons and a
+   small summary per device. Keyed by the full device path, exactly as the
+   agent reports it - um_device_key() reduces it to the same basename the
+   other two payloads join on. */
+$smart = json_encode(['count' => 2, 'disks' => [
+    '/dev/sdc' => ['verdict' => 'WATCH',
+                   'reasons' => ['grown defects: 4', 'last self-test 21316 h ago'],
+                   'summary' => ['model' => 'ST10000NM0226', 'power_on_hours' => 55161]],
+    '/dev/sdz' => ['verdict' => 'OK', 'reasons' => [],
+                   'summary' => ['model' => 'MG07SCA14TE', 'power_on_hours' => 100]]]]);
+$db->exec("INSERT INTO node_state VALUES('a1b2','smart','ok',NULL,'2026-09-01T02:00:00Z','"
+          . SQLite3::escapeString($smart) . "')");
 
 $db->exec("INSERT INTO node_state VALUES('a1b2','disks','ok',NULL,'2026-08-27T10:00:00Z','$disks')");
 $db->exec("INSERT INTO node_state VALUES('a1b2','array','ok',NULL,'2026-08-27T09:00:00Z','$array')");
@@ -146,6 +161,66 @@ $src = (string) file_get_contents($base . '/api/disks.php');
 check('session gated', str_contains($src, 'um_require_session()'));
 check('the dispatch reports whether the database was readable',
       str_contains($src, "'db' => um_db_readable(\$db)"));
+
+$out = um_fleet_disks($db);
+$byDevice = [];
+foreach ($out['disks'] as $row) $byDevice[$row['node'] . ':' . $row['device']] = $row;
+
+$golem = $byDevice['Golem:/dev/sdc'];
+check('a tier 1 disk carries its verdict', $golem['verdict'] === 'WATCH');
+check('a tier 1 disk carries its reasons', $golem['reasons'][0] === 'grown defects: 4');
+check('a tier 1 disk is marked tier 1', $golem['smart_tier'] === 1);
+/* The smart domain has its own clock. Stamping a smart reading with the disks
+   timestamp misreports its age, the same way stamping an orphan row with it
+   already would. */
+check('the smart reading keeps its own timestamp',
+      $golem['smart_fetched_at'] === '2026-09-01T02:00:00Z'
+      && $golem['fetched_at'] !== $golem['smart_fetched_at']);
+
+$raven = $byDevice['Raven:/dev/sdc'] ?? null;
+check('a tier 0 disk is marked tier 0', $raven !== null && $raven['smart_tier'] === 0);
+check('a tier 0 disk has no verdict', $raven !== null && $raven['verdict'] === null);
+$ravenStale = array_filter($out['stale'], fn($s) => $s['node'] === 'Raven'
+                                                && $s['domain'] === 'smart');
+check('a tier 0 node is not stale for a domain it never runs', $ravenStale === []);
+
+/* The case that proves the tier is READ, not inferred. Cedar is tier 1 with a
+   disks payload and no smart payload at all - enrolled and not yet polled.
+   Inferred from payload presence it would read tier 0 and be labelled
+   "(limited)", telling the operator it CANNOT be assessed when it merely has
+   not been. */
+$db->exec("INSERT INTO nodes VALUES('e5f6','Cedar','1.2.3.8',1,1,1,'x','y','SENTINEL-KEY-NOT-FOR-EXPORT')");
+$db->exec("INSERT INTO node_state VALUES('e5f6','disks','ok',NULL,'2026-09-01T01:00:00Z','"
+          . SQLite3::escapeString($disks) . "')");
+$out = um_fleet_disks($db);
+$cedar = null;
+foreach ($out['disks'] as $row) if ($row['node'] === 'Cedar') { $cedar = $row; break; }
+check('an unpolled tier 1 node is still tier 1', $cedar !== null && $cedar['smart_tier'] === 1);
+check('an unpolled tier 1 node has no verdict yet', $cedar !== null && $cedar['verdict'] === null);
+$cedarStale = array_values(array_filter($out['stale'],
+    fn($s) => $s['node'] === 'Cedar' && $s['domain'] === 'smart'));
+check('an unpolled tier 1 node is listed as stale for smart',
+      count($cedarStale) === 1
+      && $cedarStale[0]['error'] === 'no SMART poll recorded yet');
+check('every stale entry names its domain',
+      count(array_filter($out['stale'], fn($s) => !isset($s['domain']))) === 0);
+
+/* store.py's v4 migration copies node_state rows rather than clearing them, so
+   a 'smart' row written by the PREVIOUS build can still hold the raw smartctl
+   document shape until the slow lane repolls - including a bare null for a
+   device that could not be read. That old shape has no 'verdict' key at all;
+   it must read as "no verdict for this disk", not warn or fatal. */
+$db->exec("INSERT INTO nodes VALUES('f6a7','Ember','1.2.3.9',1,1,1,'x','y','SENTINEL-KEY-NOT-FOR-EXPORT')");
+$rawSmart = json_encode(['/dev/sde' => null, '/dev/sdf' => ['temperature' => 30]]);
+$db->exec("INSERT INTO node_state VALUES('f6a7','disks','ok',NULL,'2026-09-01T01:00:00Z','"
+          . SQLite3::escapeString($disks) . "')");
+$db->exec("INSERT INTO node_state VALUES('f6a7','smart','ok',NULL,'2026-09-01T02:00:00Z','"
+          . SQLite3::escapeString($rawSmart) . "')");
+$out = um_fleet_disks($db);
+$ember = null;
+foreach ($out['disks'] as $row) if ($row['node'] === 'Ember') { $ember = $row; break; }
+check('an old raw smart payload does not crash the join', $ember !== null);
+check('an old raw smart payload yields no verdict', $ember !== null && $ember['verdict'] === null);
 
 echo $fails === 0 ? "disks: all pass\n" : "disks: $fails FAILED\n";
 exit($fails === 0 ? 0 : 1);

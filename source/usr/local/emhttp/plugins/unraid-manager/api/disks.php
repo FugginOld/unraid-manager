@@ -15,7 +15,7 @@ require_once __DIR__ . '/../include/common.php';
 function um_disk_payloads(SQLite3 $db): array {
     $out = [];
     foreach (um_query($db, "SELECT node_id, domain, status, error, fetched_at, payload "
-                         . "FROM node_state WHERE domain IN ('disks','array')") as $row) {
+                         . "FROM node_state WHERE domain IN ('disks','array','smart')") as $row) {
         $out[$row['node_id']][$row['domain']] = $row;
     }
     return $out;
@@ -40,7 +40,7 @@ function um_fleet_disks(?SQLite3 $db): array {
     $byNode = um_disk_payloads($db);
     $disks = $spares = $stale = [];
 
-    foreach (um_query($db, 'SELECT id, name FROM nodes ORDER BY name') as $node) {
+    foreach (um_query($db, 'SELECT id, name, tier FROM nodes ORDER BY name') as $node) {
         $rows = $byNode[$node['id']] ?? [];
         $diskRow = $rows['disks'] ?? null;
 
@@ -49,6 +49,7 @@ function um_fleet_disks(?SQLite3 $db): array {
                not yet polled. Fail closed: an uncollected node is visibly
                uncollected, not silently absent from every list. */
             $stale[] = ['node' => $node['name'], 'node_id' => $node['id'],
+                        'domain' => 'disks',
                         'status' => 'unknown', 'error' => 'no disks poll recorded yet',
                         'fetched_at' => null];
             continue;
@@ -56,6 +57,7 @@ function um_fleet_disks(?SQLite3 $db): array {
 
         if (($diskRow['status'] ?? '') !== 'ok') {
             $stale[] = ['node' => $node['name'], 'node_id' => $node['id'],
+                        'domain' => 'disks',
                         'status' => $diskRow['status'],
                         'error' => (string) $diskRow['error'],
                         'fetched_at' => $diskRow['fetched_at']];
@@ -82,6 +84,29 @@ function um_fleet_disks(?SQLite3 $db): array {
             if ($k !== '') $slots[$k] = $slot;
         }
 
+        /* The tier is READ from the registry, never inferred from whether a
+           payload happens to exist. A tier 1 node that has not been polled yet
+           has no smart row, and calling that tier 0 would tell the operator the
+           node cannot be assessed when it merely has not been. */
+        $tier = (int) ($node['tier'] ?? 0);
+        $smartRow = $rows['smart'] ?? null;
+        $verdicts = [];
+        $smartPayload = json_decode((string) ($smartRow['payload'] ?? ''), true);
+        foreach ((is_array($smartPayload) ? $smartPayload['disks'] ?? [] : []) as $dev => $v) {
+            $k = um_device_key($dev);
+            if ($k !== '' && is_array($v)) $verdicts[$k] = $v;
+        }
+        if ($tier === 1 && $smartRow === null) {
+            $stale[] = ['node' => $node['name'], 'node_id' => $node['id'],
+                        'domain' => 'smart', 'status' => 'unknown',
+                        'error' => 'no SMART poll recorded yet', 'fetched_at' => null];
+        } elseif ($smartRow !== null && ($smartRow['status'] ?? '') !== 'ok') {
+            $stale[] = ['node' => $node['name'], 'node_id' => $node['id'],
+                        'domain' => 'smart', 'status' => $smartRow['status'],
+                        'error' => (string) $smartRow['error'],
+                        'fetched_at' => $smartRow['fetched_at']];
+        }
+
         $usedSlots = [];
         foreach ($payload['disks'] ?? [] as $disk) {
             $key = um_device_key($disk['device'] ?? null);
@@ -97,6 +122,10 @@ function um_fleet_disks(?SQLite3 $db): array {
                 'slot' => $slot['slot'] ?? null,
                 'errors' => $slot['numErrors'] ?? null,
                 'array_status' => $slot['status'] ?? null,
+                'verdict' => $verdicts[$key]['verdict'] ?? null,
+                'reasons' => $verdicts[$key]['reasons'] ?? [],
+                'smart_tier' => $tier,
+                'smart_fetched_at' => $smartRow['fetched_at'] ?? null,
                 'fetched_at' => $diskRow['fetched_at'],
             ];
         }
@@ -115,6 +144,10 @@ function um_fleet_disks(?SQLite3 $db): array {
                 'slot' => $slot['slot'] ?? null,
                 'errors' => $slot['numErrors'] ?? null,
                 'array_status' => $slot['status'] ?? null,
+                'verdict' => $verdicts[$key]['verdict'] ?? null,
+                'reasons' => $verdicts[$key]['reasons'] ?? [],
+                'smart_tier' => $tier,
+                'smart_fetched_at' => $smartRow['fetched_at'] ?? null,
                 /* Every field on this row came from the array payload, and array
                    is a FAST domain while disks is SLOW. Stamping it with the
                    disks timestamp would misreport the age of what is shown -
@@ -125,12 +158,17 @@ function um_fleet_disks(?SQLite3 $db): array {
             ];
         }
         foreach ($payload['spares'] ?? [] as $spare) {
+            $spareKey = um_device_key($spare['device'] ?? null);
             $spares[] = ['node' => $node['name'], 'node_id' => $node['id'],
                          'model' => $spare['name'] ?? null,
                          'device' => $spare['device'] ?? null,
                          'vendor' => $spare['vendor'] ?? null,
                          'size' => $spare['size'] ?? null,
                          'smart_status' => $spare['smart_status'] ?? null,
+                         'verdict' => $verdicts[$spareKey]['verdict'] ?? null,
+                         'reasons' => $verdicts[$spareKey]['reasons'] ?? [],
+                         'smart_tier' => $tier,
+                         'smart_fetched_at' => $smartRow['fetched_at'] ?? null,
                          'fetched_at' => $diskRow['fetched_at']];
         }
     }

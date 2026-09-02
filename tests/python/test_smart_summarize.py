@@ -40,12 +40,16 @@ class TestSummarize(unittest.TestCase):
         self.assertEqual({'read': 0, 'write': 0, 'verify': None},
                          smart.summarize(self.sda)['uncorrected'])
 
-    def test_the_corrected_total_is_not_in_the_summary(self):
-        # sda carries 1 total_errors_corrected out of 17,636,562 ECC
-        # invocations - a drive doing exactly what ECC is for. Keeping it out
-        # of the summary means no rule can ever be written against it by
-        # accident and put the whole fleet on WATCH.
-        self.assertNotIn('corrected', smart.summarize(self.sda))
+    def test_the_summary_is_exactly_these_twelve_keys(self):
+        # The summary is an allow-list, not a filter: only keys named here can
+        # ever reach the rules or an API-bound payload. That is what keeps a
+        # raw smartctl field - the ECC corrected total, a serial number - from
+        # transiting into the summary just because it was added upstream.
+        self.assertEqual(
+            {'model', 'passed', 'power_on_hours', 'temperature', 'trip_temperature',
+             'grown_defects', 'pending_defects', 'uncorrected', 'rereads',
+             'self_test_result', 'self_test_value', 'self_test_hours'},
+            set(smart.summarize(self.sda)))
 
     def test_a_none_doc_summarises_to_all_none(self):
         s = smart.summarize(None)
@@ -63,6 +67,8 @@ class TestUnknownPaths(unittest.TestCase):
 
     def test_an_empty_string_is_the_same_fact_as_none(self):
         self.assertEqual('UNKNOWN', smart.verdict('')['verdict'])
+        self.assertEqual(['smartctl could not read this device'],
+                         smart.verdict('')['reasons'])
 
     def test_an_ata_drive_is_unknown_not_ok(self):
         # Checked BEFORE smart_status, which an ATA drive does report. In the

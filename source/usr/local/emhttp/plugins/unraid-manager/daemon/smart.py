@@ -41,9 +41,26 @@ def _dig(doc, *keys):
     return node
 
 
+def _number(value):
+    """value if it is a number, else None.
+
+    A string, list, or dict is not a count: the drive answered the question
+    with something that is not a number, so we do not have a number, and the
+    operator is told which questions went unanswered (summarize()'s None
+    already means "not reported") rather than being shown a value that was
+    never actually measured. bool is excluded even though Python treats it as
+    a subclass of int - True/False answers a yes/no question, not a count.
+    """
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return value
+    return None
+
+
 def _lanes(doc, field):
     """One value per SCSI lane, None for a lane the drive did not report."""
-    return {lane: _dig(doc, 'scsi_error_counter_log', lane, field)
+    return {lane: _number(_dig(doc, 'scsi_error_counter_log', lane, field))
             for lane in LANES}
 
 
@@ -63,16 +80,16 @@ def summarize(doc):
     return {
         'model': doc.get('model_name'),
         'passed': _dig(doc, 'smart_status', 'passed'),
-        'power_on_hours': _dig(doc, 'power_on_time', 'hours'),
-        'temperature': _dig(doc, 'temperature', 'current'),
-        'trip_temperature': _dig(doc, 'temperature', 'drive_trip'),
-        'grown_defects': doc.get('scsi_grown_defect_list'),
-        'pending_defects': _dig(doc, 'scsi_pending_defects', 'count'),
+        'power_on_hours': _number(_dig(doc, 'power_on_time', 'hours')),
+        'temperature': _number(_dig(doc, 'temperature', 'current')),
+        'trip_temperature': _number(_dig(doc, 'temperature', 'drive_trip')),
+        'grown_defects': _number(doc.get('scsi_grown_defect_list')),
+        'pending_defects': _number(_dig(doc, 'scsi_pending_defects', 'count')),
         'uncorrected': _lanes(doc, 'total_uncorrected_errors'),
         'rereads': _lanes(doc, 'errors_corrected_by_rereads_rewrites'),
         'self_test_result': _dig(doc, 'scsi_self_test_0', 'result', 'string'),
-        'self_test_value': _dig(doc, 'scsi_self_test_0', 'result', 'value'),
-        'self_test_hours': _dig(doc, 'scsi_self_test_0', 'power_on_time', 'hours'),
+        'self_test_value': _number(_dig(doc, 'scsi_self_test_0', 'result', 'value')),
+        'self_test_hours': _number(_dig(doc, 'scsi_self_test_0', 'power_on_time', 'hours')),
     }
 
 

@@ -186,5 +186,26 @@ class TestTheRealDrives(unittest.TestCase):
         self.assertEqual(['last self-test 5690 h ago'], got['reasons'])
 
 
+class TestUntypedNumericFields(unittest.TestCase):
+    # smart_status.passed==False is a fail already covered by rule 1; here we
+    # push a non-number into a field summarize() treats as a count, and check
+    # that it is read as "not reported" rather than raising.
+
+    def test_a_string_reading_summarizes_to_none_not_the_string(self):
+        doc = sda(lambda d: d.update(scsi_grown_defect_list='oops'))
+        self.assertIsNone(smart.summarize(doc)['grown_defects'])
+
+    def test_a_string_grown_defect_count_does_not_raise_and_reads_as_absent(self):
+        got = smart.verdict(sda(lambda d: d.update(scsi_grown_defect_list='oops')))
+        self.assertEqual('OK', got['verdict'])
+        self.assertIn('grown defect count not reported', got['reasons'])
+
+    def test_bool_is_not_treated_as_a_number_here(self):
+        # bool is a subclass of int in Python, but True/False answers a
+        # yes/no question, not a count - it must not survive as one.
+        doc = sda(lambda d: d.update(scsi_grown_defect_list=True))
+        self.assertIsNone(smart.summarize(doc)['grown_defects'])
+
+
 if __name__ == '__main__':
     unittest.main()

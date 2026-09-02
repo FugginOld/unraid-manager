@@ -46,6 +46,17 @@ function py_function(string $src, string $name): string {
 }
 
 function py_code_only(string $src): string {
+    /* Triple-quoted strings go first, and separately from the # stripper
+       below: a docstring is prose, not code, and prose that DESCRIBES a
+       guard is not the guard. Demonstrated live - delete both doc.pop(...)
+       calls from parse_smart and add one docstring sentence that quotes
+       doc.pop('serial_number', None), and the # stripper alone leaves that
+       quoted call sitting in $out, so the pin reads the description and
+       reports the guard present while the code implementing it is gone.
+       Not a full Python parser: nested/escaped triple quotes inside a
+       docstring are not handled, which is fine for the small function
+       bodies this is pointed at. */
+    $src = preg_replace('/"""[\s\S]*?"""|\'\'\'[\s\S]*?\'\'\'/', '', $src);
     /* Naive about a # inside a string literal, which is fine for the small
        function bodies this is pointed at - and necessary, because the comment
        explaining why serialNum is dropped contains the word this pin hunts. */

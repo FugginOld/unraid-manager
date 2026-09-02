@@ -106,6 +106,16 @@ check('guard: serialNum never reaches a payload',
       $diskRow !== '' && str_contains($diskRow, "'smart_status'")
       && !preg_match('/serial/i', $diskRow));
 
+/* Source pin, not behavioural: a stripped key and a key smart.verdict() never
+   read produce the identical stored envelope, so no assertion on the OUTPUT
+   of parse_smart can tell "stripped" from "never there" apart. The only place
+   this guard is observable at all is the source line that does the popping. */
+$parseSmart = py_code_only(py_function($collector, 'parse_smart'));
+check('guard: parse_smart strips serial_number and logical_unit_id',
+      $parseSmart !== ''
+      && str_contains($parseSmart, "doc.pop('serial_number', None)")
+      && str_contains($parseSmart, "doc.pop('logical_unit_id', None)"));
+
 /* ── "Do not re-add" — confirmed absent, not merely intended to be ────────── */
 $parityQuery = '';
 if (preg_match("/_domain\('parity'.*?parse_parity\)/s", $collector, $m)) $parityQuery = $m[0];

@@ -79,13 +79,12 @@ class TestCollectAgent(unittest.TestCase):
         self.assertEqual(2, got.payload['count'])
 
     def test_no_serial_survives_into_the_payload(self):
-        import json as _json
         doc = context.fixture_json('agent-smart-golem-sda.json')
         doc['serial_number'] = 'SENTINEL-SERIAL-NOT-FOR-EXPORT'
         doc['logical_unit_id'] = 'SENTINEL-LUN-NOT-FOR-EXPORT'
         got = self.collect(lambda node, verb, args, timeout:
-                           {'/dev/sda': _json.dumps(doc)})
-        self.assertNotIn('SENTINEL', _json.dumps(got.payload))
+                           {'/dev/sda': json.dumps(doc)})
+        self.assertNotIn('SENTINEL', json.dumps(got.payload))
 
 
 class TestParseSmart(unittest.TestCase):
@@ -93,15 +92,25 @@ class TestParseSmart(unittest.TestCase):
         # smartctl's exit status is a bitmask: a healthy read of a disk with
         # prefail attributes set exits non-zero, and the agent still sends the
         # full document in that case - it only sends '' when it truly could
-        # not read the disk. '' and None are the same "no data" fact here.
+        # not read the disk. '' and None are the same "no data" fact here -
+        # not merely "both land on UNKNOWN", but the identical verdict dict,
+        # reasons and summary included.
         got = collector.parse_smart({'/dev/sda': ''})
         self.assertEqual('UNKNOWN', got['disks']['/dev/sda']['verdict'])
+        self.assertEqual(collector.parse_smart({'/dev/sda': None})['disks']['/dev/sda'],
+                         got['disks']['/dev/sda'])
 
-    def test_serial_number_and_logical_unit_id_are_stripped(self):
+    def test_an_unrelated_field_survives_into_the_summary(self):
         # The committed fixtures were scrubbed on the box - they carry neither
-        # field - so asserting against them would pass whether or not the
-        # parser strips anything. This dict is built here, in the test, and
-        # DOES carry both, the way live smartctl output does.
+        # serial_number nor logical_unit_id - so this dict is built here, in
+        # the test, the way live smartctl output does. The strip itself is
+        # unobservable from here: a key parse_smart drops and a key
+        # smart.verdict() never reads produce the identical envelope, so that
+        # guarantee is pinned by source inspection instead, in
+        # tests/php/policy_test.php ('parse_smart strips serial_number and
+        # logical_unit_id'). What IS observable at this level is that the
+        # strip is not a wholesale wipe - an unrelated field still reaches the
+        # summary the verdict carries.
         raw = json.dumps({
             'device': {'name': '/dev/sda'},
             'model_name': 'ST8000NM0055',
@@ -110,12 +119,7 @@ class TestParseSmart(unittest.TestCase):
             'smart_status': {'passed': True},
         })
         got = collector.parse_smart({'/dev/sda': raw})
-        disk = got['disks']['/dev/sda']
-        self.assertNotIn('serial_number', disk)
-        self.assertNotIn('logical_unit_id', disk)
-        # and it is not a wholesale wipe - an unrelated field survives, by way
-        # of the summary the verdict carries.
-        self.assertEqual('ST8000NM0055', disk['summary']['model'])
+        self.assertEqual('ST8000NM0055', got['disks']['/dev/sda']['summary']['model'])
 
 
 if __name__ == '__main__':

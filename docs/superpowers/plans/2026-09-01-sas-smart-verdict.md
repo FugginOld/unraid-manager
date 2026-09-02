@@ -108,12 +108,23 @@ class TestSummarize(unittest.TestCase):
         self.assertEqual({'read': 0, 'write': 0, 'verify': None},
                          smart.summarize(self.sda)['uncorrected'])
 
-    def test_the_corrected_total_is_not_in_the_summary(self):
-        # sda carries 1 total_errors_corrected out of 17,636,562 ECC
-        # invocations - a drive doing exactly what ECC is for. Keeping it out
-        # of the summary means no rule can ever be written against it by
-        # accident and put the whole fleet on WATCH.
-        self.assertNotIn('corrected', smart.summarize(self.sda))
+    def test_the_summary_is_exactly_these_twelve_keys(self):
+        # The summary is an allow-list, so no raw smartctl key can transit into
+        # an API-bound payload by being added upstream - not a serial, and not
+        # total_errors_corrected, of which sda carries 1 out of 17,636,562 ECC
+        # invocations. A rule written against that count by accident would put
+        # the whole fleet on WATCH for drives doing exactly what ECC is for.
+        #
+        # Asserted as a key SET, not as assertNotIn('corrected', ...): that
+        # earlier form tested for a key literally named 'corrected', which no
+        # implementation would ever emit, and passed unchanged when
+        # total_errors_corrected was injected into the summary.
+        self.assertEqual(
+            {'model', 'passed', 'power_on_hours', 'temperature',
+             'trip_temperature', 'grown_defects', 'pending_defects',
+             'uncorrected', 'rereads', 'self_test_result', 'self_test_value',
+             'self_test_hours'},
+            set(smart.summarize(self.sda)))
 
     def test_a_none_doc_summarises_to_all_none(self):
         s = smart.summarize(None)

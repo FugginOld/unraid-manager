@@ -89,6 +89,86 @@ def _is_scsi(doc):
     return any(str(key).startswith('scsi_') for key in doc)
 
 
+def _fail_reasons(summary):
+    """Conditions under which the drive should be replaced.
+
+    Every comparison guards against None first: an absent counter is not a
+    zero counter, and a rule that read it as one would report a drive healthy
+    on evidence it never had.
+    """
+    out = []
+    if summary['passed'] is False:
+        out.append('the drive reports SMART failure')
+    for lane in LANES:
+        count = summary['uncorrected'][lane]
+        if count:
+            # Uncorrected means the data did not come back. Corrected counts
+            # are ECC doing its job and are not in the summary at all.
+            out.append('uncorrected %s errors: %d' % (lane, count))
+    if summary['self_test_value'] in SELF_TEST_FAILURES:
+        out.append('last self-test failed: %s'
+                   % (summary['self_test_result']
+                      or 'result code %s' % summary['self_test_value']))
+    temp, trip = summary['temperature'], summary['trip_temperature']
+    if temp is not None and trip is not None and temp >= trip:
+        out.append("at the drive's own trip point (%s C)" % trip)
+    return out
+
+
+def _watch_reasons(summary):
+    """Conditions worth an operator's attention before they are a failure."""
+    out = []
+    if summary['grown_defects']:
+        out.append('grown defects: %d' % summary['grown_defects'])
+    if summary['pending_defects']:
+        out.append('sectors pending reallocation: %d' % summary['pending_defects'])
+    for lane in LANES:
+        count = summary['rereads'][lane]
+        if count:
+            # A reread means the first attempt failed. This is the counter that
+            # carries signal; total_errors_corrected is not.
+            out.append('%s operations needing a retry: %d' % (lane, count))
+    temp, trip = summary['temperature'], summary['trip_temperature']
+    if (temp is not None and trip is not None
+            and trip - TRIP_MARGIN_C <= temp < trip):
+        # Half-open on purpose. Open-ended, a drive at or above its trip point
+        # would fire this rule and the FAIL one together, printing two reasons
+        # for one fact.
+        out.append('within %d C of the drive%s trip point' % (TRIP_MARGIN_C, "'s"))
+    return out
+
+
+def _advisories(summary):
+    """Facts worth printing that are not verdicts.
+
+    Self-test AGE is here rather than in _watch_reasons deliberately. Unraid
+    schedules no SAS self-tests, so both captured drives are already years past
+    their last one; made a WATCH it would flag the entire fleet and say
+    nothing. The age of a test is a fact about monitoring hygiene, not about
+    the drive. A self-test FAILURE is a different thing and does set FAIL.
+
+    The five "not reported" lines are the absent-versus-zero invariant made
+    visible: the operator is told which questions the drive declined to answer,
+    rather than being shown a clean number the drive never gave.
+    """
+    out = []
+    hours, tested = summary['power_on_hours'], summary['self_test_hours']
+    if (hours is not None and tested is not None
+            and hours - tested > SELF_TEST_STALE_HOURS):
+        out.append('last self-test %d h ago' % (hours - tested))
+    if summary['grown_defects'] is None:
+        out.append('grown defect count not reported')
+    if summary['pending_defects'] is None:
+        out.append('pending defect count not reported')
+    if all(summary['uncorrected'][lane] is None for lane in LANES):
+        out.append('error counters not reported')
+    if summary['self_test_value'] is None:
+        out.append('no self-test on record')
+    if summary['temperature'] is None:
+        out.append('temperature not reported')
+    return out
+
+
 def verdict(doc):
     """doc is one device's parsed smartctl JSON, or None if unreadable.
 
@@ -111,4 +191,8 @@ def verdict(doc):
         return _result('UNKNOWN', ['not a SAS drive: no SCSI SMART data'], summary)
     if summary['passed'] is None:
         return _result('UNKNOWN', ['no SMART status reported'], summary)
-    return _result('OK', [], summary)
+    fails = _fail_reasons(summary)
+    watches = _watch_reasons(summary)
+    state = 'FAIL' if fails else ('WATCH' if watches else 'OK')
+    # reasons[0] is always the deciding one, and nothing notable is discarded.
+    return _result(state, fails + watches + _advisories(summary), summary)

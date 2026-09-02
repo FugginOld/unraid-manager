@@ -207,5 +207,74 @@ class TestUntypedNumericFields(unittest.TestCase):
         self.assertIsNone(smart.summarize(doc)['grown_defects'])
 
 
+class TestPassedTypeSafety(unittest.TestCase):
+    # passed is the field the OK-only-from-a-positive-signal invariant rests
+    # on. A non-bool reading is neither True nor False and must not slip
+    # through as a fact the drive never stated - it has to land on the same
+    # UNKNOWN gate an absent smart_status already uses.
+
+    def test_a_string_passed_is_unknown_not_ok(self):
+        got = smart.verdict(sda(lambda d: d['smart_status'].update(passed='false')))
+        self.assertEqual('UNKNOWN', got['verdict'])
+        self.assertEqual(['no SMART status reported'], got['reasons'])
+
+    def test_a_zero_passed_is_unknown_not_ok(self):
+        got = smart.verdict(sda(lambda d: d['smart_status'].update(passed=0)))
+        self.assertEqual('UNKNOWN', got['verdict'])
+        self.assertEqual(['no SMART status reported'], got['reasons'])
+
+
+class TestNonFiniteNumbers(unittest.TestCase):
+    # json.loads parses literal NaN/Infinity by default, so these reach
+    # summarize() the same way a string would - not a count, and must not
+    # raise when a rule tries to format one.
+
+    def test_nan_grown_defects_does_not_raise_and_is_not_reported(self):
+        got = smart.verdict(sda(lambda d: d.update(scsi_grown_defect_list=float('nan'))))
+        self.assertEqual('OK', got['verdict'])
+        self.assertIn('grown defect count not reported', got['reasons'])
+
+    def test_infinite_pending_defects_does_not_raise_and_is_not_reported(self):
+        got = smart.verdict(sda(lambda d: d.update(
+            scsi_pending_defects={'count': float('inf')})))
+        self.assertEqual('OK', got['verdict'])
+        self.assertIn('pending defect count not reported', got['reasons'])
+
+
+class TestSelfTestResultFallback(unittest.TestCase):
+    def test_a_failure_with_no_result_string_falls_back_to_the_code(self):
+        def flip(d):
+            d['scsi_self_test_0']['result'] = {'value': 5}
+        got = smart.verdict(sda(flip))
+        self.assertEqual('FAIL', got['verdict'])
+        self.assertEqual('last self-test failed: result code 5', got['reasons'][0])
+
+
+class TestErrorCounterAdvisories(unittest.TestCase):
+    # The combined "error counters not reported" line covers the common case
+    # where scsi_error_counter_log is missing outright. A drive that reports
+    # one structure but not the other is a different fact and gets its own
+    # line, because rule 2 (FAIL, uncorrected) and rule 7 (WATCH, rereads)
+    # can each still fire independently of the other's absence.
+
+    def test_rereads_absent_but_uncorrected_present_gets_its_own_line(self):
+        def strip_rereads(d):
+            for lane in ('read', 'write', 'verify'):
+                del d['scsi_error_counter_log'][lane]['errors_corrected_by_rereads_rewrites']
+        got = smart.verdict(sda(strip_rereads))
+        self.assertEqual('OK', got['verdict'])
+        self.assertIn('retry counters not reported', got['reasons'])
+        self.assertNotIn('error counters not reported', got['reasons'])
+
+    def test_uncorrected_absent_but_rereads_present_gets_its_own_line(self):
+        def strip_uncorrected(d):
+            for lane in ('read', 'write', 'verify'):
+                del d['scsi_error_counter_log'][lane]['total_uncorrected_errors']
+        got = smart.verdict(sda(strip_uncorrected))
+        self.assertEqual('OK', got['verdict'])
+        self.assertIn('uncorrected error counters not reported', got['reasons'])
+        self.assertNotIn('error counters not reported', got['reasons'])
+
+
 if __name__ == '__main__':
     unittest.main()

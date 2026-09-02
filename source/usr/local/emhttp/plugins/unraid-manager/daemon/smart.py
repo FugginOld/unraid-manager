@@ -12,6 +12,8 @@ means "the drive did not report this", so no rule can reintroduce the defect
 by reaching for a raw key with a default.
 """
 
+import math
+
 LANES = ('read', 'write', 'verify')
 
 # SCSI self-test result codes: 0 completed without error, 1 aborted by host,
@@ -42,7 +44,7 @@ def _dig(doc, *keys):
 
 
 def _number(value):
-    """value if it is a number, else None.
+    """value if it is a finite number, else None.
 
     A string, list, or dict is not a count: the drive answered the question
     with something that is not a number, so we do not have a number, and the
@@ -50,8 +52,13 @@ def _number(value):
     already means "not reported") rather than being shown a value that was
     never actually measured. bool is excluded even though Python treats it as
     a subclass of int - True/False answers a yes/no question, not a count.
+    NaN and Infinity are excluded too: json.loads parses them from the raw
+    document by default, and neither is a count either - a NaN reaches a %d
+    formatter as a ValueError, an Infinity as an OverflowError.
     """
     if isinstance(value, bool):
+        return None
+    if isinstance(value, float) and not math.isfinite(value):
         return None
     if isinstance(value, (int, float)):
         return value
@@ -77,9 +84,14 @@ def summarize(doc):
     accident.
     """
     doc = doc if isinstance(doc, dict) else {}
+    passed = _dig(doc, 'smart_status', 'passed')
     return {
         'model': doc.get('model_name'),
-        'passed': _dig(doc, 'smart_status', 'passed'),
+        # Not a count, so not through _number(): a non-bool reading (a stray
+        # "false" string, a 0) is not a positive-or-negative signal either,
+        # and the existing passed-is-None -> UNKNOWN gate already refuses to
+        # judge on it once it collapses to None here.
+        'passed': passed if isinstance(passed, bool) else None,
         'power_on_hours': _number(_dig(doc, 'power_on_time', 'hours')),
         'temperature': _number(_dig(doc, 'temperature', 'current')),
         'trip_temperature': _number(_dig(doc, 'temperature', 'drive_trip')),
@@ -118,7 +130,7 @@ def _fail_reasons(summary):
         out.append('the drive reports SMART failure')
     for lane in LANES:
         count = summary['uncorrected'][lane]
-        if count:
+        if count is not None and count > 0:
             # Uncorrected means the data did not come back. Corrected counts
             # are ECC doing its job and are not in the summary at all.
             out.append('uncorrected %s errors: %d' % (lane, count))
@@ -128,7 +140,7 @@ def _fail_reasons(summary):
                       or 'result code %s' % summary['self_test_value']))
     temp, trip = summary['temperature'], summary['trip_temperature']
     if temp is not None and trip is not None and temp >= trip:
-        out.append("at the drive's own trip point (%s C)" % trip)
+        out.append("at the drive's own trip point (%d C)" % trip)
     return out
 
 
@@ -141,7 +153,7 @@ def _watch_reasons(summary):
         out.append('sectors pending reallocation: %d' % summary['pending_defects'])
     for lane in LANES:
         count = summary['rereads'][lane]
-        if count:
+        if count is not None and count > 0:
             # A reread means the first attempt failed. This is the counter that
             # carries signal; total_errors_corrected is not.
             out.append('%s operations needing a retry: %d' % (lane, count))
@@ -151,7 +163,7 @@ def _watch_reasons(summary):
         # Half-open on purpose. Open-ended, a drive at or above its trip point
         # would fire this rule and the FAIL one together, printing two reasons
         # for one fact.
-        out.append('within %d C of the drive%s trip point' % (TRIP_MARGIN_C, "'s"))
+        out.append("within %d C of the drive's trip point" % TRIP_MARGIN_C)
     return out
 
 
@@ -177,8 +189,20 @@ def _advisories(summary):
         out.append('grown defect count not reported')
     if summary['pending_defects'] is None:
         out.append('pending defect count not reported')
-    if all(summary['uncorrected'][lane] is None for lane in LANES):
+    uncorrected_absent = all(summary['uncorrected'][lane] is None for lane in LANES)
+    rereads_absent = all(summary['rereads'][lane] is None for lane in LANES)
+    if uncorrected_absent and rereads_absent:
+        # The common case: scsi_error_counter_log is missing outright, so
+        # both structures vanish together and one line covers the fact.
         out.append('error counters not reported')
+    elif uncorrected_absent:
+        # Rule 2 (FAIL) can never fire; rule 7 (WATCH) still can. A drive
+        # reporting one structure but not the other is a different fact from
+        # reporting neither, and gets its own line rather than going unsaid.
+        out.append('uncorrected error counters not reported')
+    elif rereads_absent:
+        # Rule 7 (WATCH) can never fire; rule 2 (FAIL) still can.
+        out.append('retry counters not reported')
     if summary['self_test_value'] is None:
         out.append('no self-test on record')
     if summary['temperature'] is None:

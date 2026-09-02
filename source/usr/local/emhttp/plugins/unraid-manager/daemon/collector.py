@@ -13,6 +13,7 @@ from collections import namedtuple
 
 import agentclient
 import gqlclient
+import smart
 
 FAST = 'fast'
 SLOW = 'slow'
@@ -392,24 +393,30 @@ def parse_smart(data):
     A present-but-failing smartctl still exits non-zero on a healthy disk with
     prefail attributes set (its exit status is a bitmask), so the agent can
     send an EMPTY STRING for a disk it read just fine. That is the same "no
-    data" fact as None, not a different one, so both collapse to the same
-    null entry here rather than one becoming a value and the other vanishing.
-    A drive we truly could not read must still keep its key: dropping it would
-    make a dead disk look like a disk that was never installed.
+    data" fact as None, not a different one, so both reach smart.verdict(None)
+    and come back UNKNOWN rather than one becoming a value and the other
+    vanishing. A drive we truly could not read must still keep its key:
+    dropping it would make a dead disk look like a disk that was never
+    installed.
 
-    serial_number and logical_unit_id are stripped before this payload goes
-    anywhere: plan section 12 forbids a raw serial in an API-bound payload,
-    and api/disks.php serves this dict straight to the browser.
+    serial_number and logical_unit_id are stripped before the document reaches
+    the verdict chain: plan section 12 forbids a raw serial in an API-bound
+    payload, and this payload is served to the browser. smart.summarize() reads
+    neither, so the stripped document and the summary are both clean.
+
+    What is stored is the verdict, its reasons and a small summary - not the
+    raw document. The raw form ran about 8 KB per device, 300 KB per node per
+    poll, and no consumer ever read it.
     """
     disks = {}
     for device, raw in (data or {}).items():
         if not raw:
-            disks[device] = None
+            disks[device] = smart.verdict(None)
             continue
         doc = json.loads(raw)
         doc.pop('serial_number', None)
         doc.pop('logical_unit_id', None)
-        disks[device] = doc
+        disks[device] = smart.verdict(doc)
     return {'count': len(disks), 'disks': disks}
 
 

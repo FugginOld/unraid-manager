@@ -54,7 +54,38 @@ class TestCollectAgent(unittest.TestCase):
         # would make a dead disk look like a disk that was never there.
         got = self.collect(lambda node, verb, args, timeout: {'/dev/sda': None})
         self.assertEqual('ok', got.status)
-        self.assertIsNone(got.payload['disks']['/dev/sda'])
+        self.assertEqual('UNKNOWN', got.payload['disks']['/dev/sda']['verdict'])
+
+    def test_a_parsed_disk_carries_a_verdict_not_a_raw_document(self):
+        raw = context.fixture('agent-smart-golem-sda.json')
+        got = self.collect(lambda node, verb, args, timeout: {'/dev/sda': raw})
+        disk = got.payload['disks']['/dev/sda']
+        self.assertEqual('OK', disk['verdict'])
+        self.assertEqual(55161, disk['summary']['power_on_hours'])
+        # The raw document is gone. Storing 8 KB per device that no consumer
+        # reads cost about 300 KB per node per poll.
+        self.assertNotIn('scsi_error_counter_log', disk)
+
+    def test_an_unreadable_disk_keeps_its_key_as_unknown(self):
+        # Both None and the empty string mean "no data" - smartctl exits
+        # non-zero on a healthy drive with prefail attributes set, so the agent
+        # sends '' for a disk it read just fine. Dropping the key would make a
+        # dead disk look like one that was never installed.
+        got = self.collect(lambda node, verb, args, timeout:
+                           {'/dev/sda': None, '/dev/sdb': ''})
+        for device in ('/dev/sda', '/dev/sdb'):
+            self.assertEqual('UNKNOWN',
+                             got.payload['disks'][device]['verdict'], device)
+        self.assertEqual(2, got.payload['count'])
+
+    def test_no_serial_survives_into_the_payload(self):
+        import json as _json
+        doc = context.fixture_json('agent-smart-golem-sda.json')
+        doc['serial_number'] = 'SENTINEL-SERIAL-NOT-FOR-EXPORT'
+        doc['logical_unit_id'] = 'SENTINEL-LUN-NOT-FOR-EXPORT'
+        got = self.collect(lambda node, verb, args, timeout:
+                           {'/dev/sda': _json.dumps(doc)})
+        self.assertNotIn('SENTINEL', _json.dumps(got.payload))
 
 
 class TestParseSmart(unittest.TestCase):
@@ -64,7 +95,7 @@ class TestParseSmart(unittest.TestCase):
         # full document in that case - it only sends '' when it truly could
         # not read the disk. '' and None are the same "no data" fact here.
         got = collector.parse_smart({'/dev/sda': ''})
-        self.assertIsNone(got['disks']['/dev/sda'])
+        self.assertEqual('UNKNOWN', got['disks']['/dev/sda']['verdict'])
 
     def test_serial_number_and_logical_unit_id_are_stripped(self):
         # The committed fixtures were scrubbed on the box - they carry neither
@@ -82,8 +113,9 @@ class TestParseSmart(unittest.TestCase):
         disk = got['disks']['/dev/sda']
         self.assertNotIn('serial_number', disk)
         self.assertNotIn('logical_unit_id', disk)
-        # and it is not a wholesale wipe - an unrelated field survives.
-        self.assertEqual('ST8000NM0055', disk['model_name'])
+        # and it is not a wholesale wipe - an unrelated field survives, by way
+        # of the summary the verdict carries.
+        self.assertEqual('ST8000NM0055', disk['summary']['model'])
 
 
 if __name__ == '__main__':

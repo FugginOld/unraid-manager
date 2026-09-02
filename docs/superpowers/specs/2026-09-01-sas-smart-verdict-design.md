@@ -66,9 +66,17 @@ frontend/src/views/Disks.vue  ->  verdict column, reasons on expand
 
 ### New module: `daemon/smart.py`
 
-One pure function, no I/O, no exceptions escaping:
+Pure, no I/O, no exceptions escaping. One public entry point over two internal
+stages:
 
 ```python
+def summarize(doc):
+    """Flatten one smartctl doc to the fields the rules read.
+
+    Every value is None where the drive did not report it. This is the ONLY
+    place absent-versus-zero is decided.
+    """
+
 def verdict(doc):
     """doc is one device's parsed smartctl JSON, or None if unreadable.
 
@@ -77,6 +85,12 @@ def verdict(doc):
              'summary': {...}}
     """
 ```
+
+Splitting the read from the judgement is what makes the absent-versus-zero
+invariant enforceable: `summarize` is the single place a missing key becomes
+`None`, and every rule then reads a flat summary where `None` already means
+"not reported". Rules never touch raw smartctl JSON, so a rule cannot
+accidentally reintroduce the defect by reaching for a key with a default.
 
 It lives in its own module rather than in `collector.py` (already 495 lines) or
 `health.py` (fleet-level health, not per-device). It has one responsibility and
@@ -94,10 +108,10 @@ operator still sees everything else that is notable.
 
 | # | Condition | Reason text |
 | --- | --- | --- |
-| 1 | `smart_status.passed` is `false` | the drive reports SMART failure |
-| 2 | any of read/write/verify `total_uncorrected_errors` > 0 | N uncorrected {read,write,verify} errors |
-| 3 | `scsi_self_test_0.result.value` in 3..7 | last self-test failed: {result string} |
-| 4 | `temperature.current` >= `temperature.drive_trip` | at the drive's own trip point ({trip} C) |
+| 1 | `smart_status.passed` is `false` | `the drive reports SMART failure` |
+| 2 | any of read/write/verify `total_uncorrected_errors` > 0 | `uncorrected {lane} errors: {n}` |
+| 3 | `scsi_self_test_0.result.value` in 3..7 | `last self-test failed: {result string}` |
+| 4 | `temperature.current` >= `temperature.drive_trip` | `at the drive's own trip point ({trip} C)` |
 
 Rule 2 counts uncorrected errors only. An uncorrected error means the data did
 not come back.
@@ -111,10 +125,20 @@ test in progress is not a result.
 
 | # | Condition | Reason text |
 | --- | --- | --- |
-| 5 | `scsi_grown_defect_list` > 0 | N grown defects |
-| 6 | `scsi_pending_defects.count` > 0 | N sectors pending reallocation |
-| 7 | any of read/write/verify `errors_corrected_by_rereads_rewrites` > 0 | N {read,write,verify} operations needed a retry |
-| 8 | `temperature.current` >= `temperature.drive_trip` - 5 | within 5 C of the drive's trip point |
+| 5 | `scsi_grown_defect_list` > 0 | `grown defects: {n}` |
+| 6 | `scsi_pending_defects.count` > 0 | `sectors pending reallocation: {n}` |
+| 7 | any of read/write/verify `errors_corrected_by_rereads_rewrites` > 0 | `{lane} operations needing a retry: {n}` |
+| 8 | `drive_trip - 5` <= `temperature.current` < `drive_trip` | `within 5 C of the drive's trip point` |
+
+Counts are written after a colon rather than before a noun (`grown defects: 4`,
+not `4 grown defects`) so no reason string needs a plural form. `1 grown
+defects` is the kind of detail that makes an operator distrust the rest of the
+pane.
+
+Rule 8's condition is a half-open band, not `>= drive_trip - 5`. Open-ended, a
+drive at or above its trip point would fire rules 4 and 8 together and read
+`at the drive's own trip point (60 C)` immediately followed by `within 5 C of
+the drive's trip point` — two reasons for one fact.
 
 Rule 7 deliberately reads `errors_corrected_by_rereads_rewrites` and **not**
 `total_errors_corrected`. A reread means the first attempt failed, which is a
@@ -131,9 +155,20 @@ never the result of finding no negative ones.
   `UNKNOWN`, reason `smartctl could not read this device`.
 - `smart_status` absent from the doc -> `UNKNOWN`, reason `no SMART status
   reported`. Not `OK`.
-- An individual rule input absent -> that rule is skipped, and its absence is
-  named in `reasons` (sda reports no `scsi_pending_defects` at all, so it gets
-  `pending defect count not reported`). It is never read as zero.
+- An individual rule input absent -> that rule is skipped and the input is
+  never read as zero. Five absences are named in `reasons`, one line each:
+
+  | absent input | reason text |
+  | --- | --- |
+  | `scsi_grown_defect_list` | grown defect count not reported |
+  | `scsi_pending_defects` | pending defect count not reported |
+  | `scsi_error_counter_log` entirely | error counters not reported |
+  | `scsi_self_test_0` | no self-test on record |
+  | `temperature.current` | temperature not reported |
+
+  Naming them per lane instead (read, write and verify separately) would put
+  six lines on a drive that is merely terse. One line per absent structure is
+  the same information without the noise.
 - `doc` present but carrying no SCSI structures at all (an ATA drive, or a
   device type the chain does not understand) -> `UNKNOWN`, reason `not a SAS
   drive: no SCSI SMART data`.
@@ -155,10 +190,20 @@ means moving the condition into the WATCH table.
 
 ### Result on the captured fixtures
 
-Both devices return `OK`. sda additionally carries the advisory reasons
-`last self-test 21316 h ago` and `pending defect count not reported`. Reason
-text uses no thousands separator, so the strings are locale-free and pinnable
-in a test exactly as written.
+Both devices return `OK`, and **both** carry a self-test-age advisory:
+
+| device | reasons |
+| --- | --- |
+| sda | `last self-test 21316 h ago`, `pending defect count not reported` |
+| sdb | `last self-test 5690 h ago` |
+
+sdb's last test ran at 22,992 power-on hours against a current 28,682 — 5,690
+hours, well past the 2160-hour advisory line. **Two drives out of two trip it**,
+which is the argument for keeping self-test age advisory rather than WATCH,
+made by the only two samples the fleet has given us.
+
+Reason text uses no thousands separator, so the strings are locale-free and
+pinnable in a test exactly as written.
 
 Because both real fixtures are healthy, the fixtures alone cannot prove any rule
 fires. See Testing.
@@ -228,8 +273,13 @@ primary source) and carries `smart_fetched_at` separately, for the same reason
 the orphan rows carry the array timestamp rather than the disks one: stamping a
 value with another domain's clock misreports its age.
 
-A `smart` domain whose status is not `ok` goes in `stale` with its own message,
-alongside the existing `disks` entries.
+A `smart` domain whose status is not `ok` goes in `stale` alongside the existing
+`disks` entries. **Every `stale` entry gains a `domain` field** (`disks` or
+`smart`), because the view writes a different sentence for each: today's copy
+says "no disk list yet — this node has not been polled since it was enrolled",
+which is the wrong sentence entirely for a node whose disk list is fine and
+whose SMART call failed. Without the field the two are indistinguishable at
+render time and one of them necessarily lies.
 
 ## Frontend
 

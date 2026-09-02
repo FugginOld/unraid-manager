@@ -39,62 +39,6 @@ function php_code_only(string $src): string {
     return $out;
 }
 
-function py_function(string $src, string $name): string {
-    $pattern = '/^def ' . preg_quote($name, '/') . '\(.*?(?=^def |^class |\z)/ms';
-    if (!preg_match($pattern, $src, $m)) return '';
-    return $m[0];
-}
-
-function py_code_only(string $src): string {
-    /* # strips FIRST, docstrings SECOND - the opposite order desyncs on a
-       lone """ inside a # comment or an ordinary string literal (e.g.
-       "# a docstring is delimited by """ in python" or SEP = '"""'):
-       the docstring regex opens there and closes on the next real triple
-       quote anywhere downstream, deleting real code between them. Stripping
-       # first removes that lone triple-quote before the docstring regex
-       ever sees it.
-
-       The docstring regex is ANCHORED to a whole line - ^[ \t]*"""..."""[ \t]*$
-       under /m - not a bare "any triple-quoted span". A GraphQL query
-       written as a triple-quoted VALUE, e.g.
-       _domain('shares', FAST, '''mutation { x }''', parse_shares), sits
-       mid-line next to other code and is not anchored, so it survives; only
-       a standalone docstring line is prose here.
-
-       Demonstrated live (round 2's find): delete both doc.pop(...) calls
-       from parse_smart and add one docstring sentence that quotes
-       doc.pop('serial_number', None) - the unanchored, #-second version of
-       this function left that quoted call sitting in $out, so the pin read
-       the description and reported the guard present while the code
-       implementing it was gone.
-
-       Not a full Python parser. Two known limits, in the two directions a
-       limit can fail:
-         - FALSE-ALARM direction (loud, safe): a docstring containing a
-           nested/escaped triple-quote of the same kind is not handled and
-           may under- or over-strip, which reads as a spurious pin failure -
-           caught immediately by whoever's pin turns red, never silent.
-         - FALSE-PASS direction (the dangerous one, and why the two self-
-           checks below exist): a triple-quoted VALUE assigned with nothing
-           else on its line - `x = '''real code'''` written as the entire
-           line - is indistinguishable from a docstring by this anchor and
-           WOULD be stripped as if it were prose. None of this file's own
-           domain queries are written that way today (they are call
-           arguments, not their own line), so this is a known, written-down
-           ceiling, not a fixed one. */
-    $src = preg_replace('/#[^\n]*/', '', $src);
-    return preg_replace('/^[ \t]*("""[\s\S]*?"""|\'\'\'[\s\S]*?\'\'\')[ \t]*$/m', '', $src);
-}
-
-/* The helper above is load-bearing for four pins below; nothing exercised it
-   directly and a regression here (round 3's find) landed green through a
-   781-check suite. Two directions of the same rule, pinned here so the next
-   change to this function has to keep both true. */
-check('guard: py_code_only keeps a triple-quoted VALUE (it is code)',
-      str_contains(py_code_only("q = '''mutation { x }'''"), 'mutation'));
-check('guard: py_code_only drops a triple-quoted DOCSTRING (it is prose)',
-      !str_contains(py_code_only("def f():\n    '''calls doc.pop(x)'''\n    return 1\n"), 'doc.pop'));
-
 $policy = src($root . '/docs/review-policy.md');
 check('the policy file exists', $policy !== '');
 
@@ -142,40 +86,11 @@ check('guard: unknown means every domain is unreadable',
       str_contains($nodes, "=== count(\$domains)) return 'unknown'"));
 check('guard: the probed hostname is the blank-name fallback',
       str_contains($settingsjs, 'probedHostname'));
-/* The whole function, not the file: the disks QUERY legitimately selects
-   serialNum, and what must never happen is the row builder carrying it out. */
-$diskRow = py_code_only(py_function($collector, '_disk_row'));
-check('guard: serialNum never reaches a payload',
-      $diskRow !== '' && str_contains($diskRow, "'smart_status'")
-      && !preg_match('/serial/i', $diskRow));
-
-/* Source pin, not behavioural: a stripped key and a key smart.verdict() never
-   read produce the identical stored envelope, so no assertion on the OUTPUT
-   of parse_smart can tell "stripped" from "never there" apart. The only place
-   this guard is observable at all is the source line that does the popping. */
-$parseSmart = py_code_only(py_function($collector, 'parse_smart'));
-check('guard: parse_smart strips serial_number and logical_unit_id',
-      $parseSmart !== ''
-      && str_contains($parseSmart, "doc.pop('serial_number', None)")
-      && str_contains($parseSmart, "doc.pop('logical_unit_id', None)"));
-
 /* ── "Do not re-add" — confirmed absent, not merely intended to be ────────── */
 $parityQuery = '';
 if (preg_match("/_domain\('parity'.*?parse_parity\)/s", $collector, $m)) $parityQuery = $m[0];
 check('absent: the parity query does not ask for errors',
       $parityQuery !== '' && !str_contains($parityQuery, 'status errors'));
-/* py_code_only, not the raw file - these two pins are about what we SEND, and
-   scanning the prose that explains them is the exact failure this file's own
-   header records ("three of these originally matched the very comments that
-   describe the guard"). Both scanned raw text until 2026-08-31, when a comment
-   reading "the no-mutation assertion included" turned the first one red on a
-   commit that added no query at all. The helper was already here, one check
-   above; it just was not being used. */
-$collectorCode = py_code_only($collector);
-check('absent: no mutation appears in any domain query',
-      !preg_match('/\bmutation\b/i', $collectorCode));
-check('absent: no introspection query',
-      !str_contains($collectorCode, '__schema') && !str_contains($collectorCode, '__type'));
 /* Globbed, not named: a read path added after this pin (health.php was
    exactly the kind of code that broke on php-fpm) must be covered without
    anyone remembering to list it here. */

@@ -5,8 +5,8 @@ Every entry in **Rejected on sight** is tied to a commit where the simpler
 version shipped and broke something on real hardware. Arbitration order is in
 global CLAUDE.md and is not restated here.
 
-Pinned by `tests/php/policy_test.php`, which fails if a cited guard leaves the
-tree or a cited test stops asserting it.
+Pinned by `tests/php/policy_test.php` and `tests/python/test_source_policy.py`,
+which fail if a cited guard leaves the tree or a cited test stops asserting it.
 
 ## Scope
 

@@ -15,9 +15,9 @@ function check(string $name, bool $ok): void {
 }
 
 /* Pins must look at CODE, not at the prose explaining the code - the same
-   problem policy_test.php's php_code_only()/py_code_only() solve for PHP and
-   Python. .vue/.js source has no PHP tokenizer to lean on, so this strips the
-   three comment forms actually used in this tree: HTML/Vue-template comments,
+   problem policy_test.php's php_code_only() solves for PHP. .vue/.js source
+   has no PHP tokenizer to lean on, so this strips the three comment forms
+   actually used in this tree: HTML/Vue-template comments,
    JS/CSS block comments, and JS line comments. Fix round 1 found two checks
    in this file pinned by a comment's prose rather than by the branch it was
    explaining. */

@@ -123,14 +123,23 @@ foreach ($cited as $file => $needle) {
     check("cited test $file still asserts its guard",
           str_contains(src(__DIR__ . '/' . $file), $needle));
 }
+/* [file, needle] pairs, not a file => needle map: test_source_policy.py
+   carries four of these guards alone (the four moved out of this file's own
+   py_code_only()/py_function() when they were replaced with an ast walk),
+   and a map can hold only one needle per key - a second entry for the same
+   file would silently overwrite the first instead of adding a second check. */
 $pyCited = [
-    'test_store_writes.py'    => 'test_the_connection_is_usable_from_another_thread',
-    'test_managerd.py'        => 'test_shutdown_does_not_wait_on_in_flight_polls',
-    'test_collector_fast.py'  => 'test_the_parity_query_does_not_ask_for_errors',
-    'test_collector_slow.py'  => 'test_serial_is_dropped_from_the_payload',
+    ['test_store_writes.py',      'test_the_connection_is_usable_from_another_thread'],
+    ['test_managerd.py',          'test_shutdown_does_not_wait_on_in_flight_polls'],
+    ['test_collector_fast.py',    'test_the_parity_query_does_not_ask_for_errors'],
+    ['test_collector_slow.py',    'test_serial_is_dropped_from_the_payload'],
+    ['test_source_policy.py',     'test_parse_smart_strips_serial_number_and_logical_unit_id'],
+    ['test_source_policy.py',     'test_disk_row_does_not_leak_serial_num'],
+    ['test_source_policy.py',     'test_no_domain_query_contains_a_mutation'],
+    ['test_source_policy.py',     'test_no_domain_query_contains_an_introspection_query'],
 ];
-foreach ($pyCited as $file => $needle) {
-    check("cited test $file still asserts its guard",
+foreach ($pyCited as [$file, $needle]) {
+    check("cited test $file still asserts $needle",
           str_contains(src($root . '/tests/python/' . $file), $needle));
 }
 

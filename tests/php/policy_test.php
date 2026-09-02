@@ -46,22 +46,54 @@ function py_function(string $src, string $name): string {
 }
 
 function py_code_only(string $src): string {
-    /* Triple-quoted strings go first, and separately from the # stripper
-       below: a docstring is prose, not code, and prose that DESCRIBES a
-       guard is not the guard. Demonstrated live - delete both doc.pop(...)
-       calls from parse_smart and add one docstring sentence that quotes
-       doc.pop('serial_number', None), and the # stripper alone leaves that
-       quoted call sitting in $out, so the pin reads the description and
-       reports the guard present while the code implementing it is gone.
-       Not a full Python parser: nested/escaped triple quotes inside a
-       docstring are not handled, which is fine for the small function
-       bodies this is pointed at. */
-    $src = preg_replace('/"""[\s\S]*?"""|\'\'\'[\s\S]*?\'\'\'/', '', $src);
-    /* Naive about a # inside a string literal, which is fine for the small
-       function bodies this is pointed at - and necessary, because the comment
-       explaining why serialNum is dropped contains the word this pin hunts. */
-    return preg_replace('/#[^\n]*/', '', $src);
+    /* # strips FIRST, docstrings SECOND - the opposite order desyncs on a
+       lone """ inside a # comment or an ordinary string literal (e.g.
+       "# a docstring is delimited by """ in python" or SEP = '"""'):
+       the docstring regex opens there and closes on the next real triple
+       quote anywhere downstream, deleting real code between them. Stripping
+       # first removes that lone triple-quote before the docstring regex
+       ever sees it.
+
+       The docstring regex is ANCHORED to a whole line - ^[ \t]*"""..."""[ \t]*$
+       under /m - not a bare "any triple-quoted span". A GraphQL query
+       written as a triple-quoted VALUE, e.g.
+       _domain('shares', FAST, '''mutation { x }''', parse_shares), sits
+       mid-line next to other code and is not anchored, so it survives; only
+       a standalone docstring line is prose here.
+
+       Demonstrated live (round 2's find): delete both doc.pop(...) calls
+       from parse_smart and add one docstring sentence that quotes
+       doc.pop('serial_number', None) - the unanchored, #-second version of
+       this function left that quoted call sitting in $out, so the pin read
+       the description and reported the guard present while the code
+       implementing it was gone.
+
+       Not a full Python parser. Two known limits, in the two directions a
+       limit can fail:
+         - FALSE-ALARM direction (loud, safe): a docstring containing a
+           nested/escaped triple-quote of the same kind is not handled and
+           may under- or over-strip, which reads as a spurious pin failure -
+           caught immediately by whoever's pin turns red, never silent.
+         - FALSE-PASS direction (the dangerous one, and why the two self-
+           checks below exist): a triple-quoted VALUE assigned with nothing
+           else on its line - `x = '''real code'''` written as the entire
+           line - is indistinguishable from a docstring by this anchor and
+           WOULD be stripped as if it were prose. None of this file's own
+           domain queries are written that way today (they are call
+           arguments, not their own line), so this is a known, written-down
+           ceiling, not a fixed one. */
+    $src = preg_replace('/#[^\n]*/', '', $src);
+    return preg_replace('/^[ \t]*("""[\s\S]*?"""|\'\'\'[\s\S]*?\'\'\')[ \t]*$/m', '', $src);
 }
+
+/* The helper above is load-bearing for four pins below; nothing exercised it
+   directly and a regression here (round 3's find) landed green through a
+   781-check suite. Two directions of the same rule, pinned here so the next
+   change to this function has to keep both true. */
+check('guard: py_code_only keeps a triple-quoted VALUE (it is code)',
+      str_contains(py_code_only("q = '''mutation { x }'''"), 'mutation'));
+check('guard: py_code_only drops a triple-quoted DOCSTRING (it is prose)',
+      !str_contains(py_code_only("def f():\n    '''calls doc.pop(x)'''\n    return 1\n"), 'doc.pop'));
 
 $policy = src($root . '/docs/review-policy.md');
 check('the policy file exists', $policy !== '');

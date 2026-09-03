@@ -95,6 +95,49 @@ the search box is the first `v-model` in a tested view, and `vModelText`'s
 `beforeUpdate` reads them at every patch. Missing, it surfaces as a bare
 `ReferenceError` from inside Vue and reads as a broken component.
 
+## Pending — the SAS SMART verdict, three checks NOT YET RUN
+
+Tasks 1-5 built the verdict chain (`daemon/smart.py`), wired it through the
+collector and `api/disks.php`, and rendered it in the Disks pane. All of it is
+covered off-box: 491 Python tests, the PHP suite, and `tests/js/views.mjs`
+through real clicks. None of that proves the pane on an actual box. The three
+checks below are the ones this needs, **in order**, and none of them has been
+run — this section records what to look for, not what the box said. Paste the
+real output in here when they run; a check recorded as "passed" with no
+evidence is not a check (see the standing rule above).
+
+1. **Golem shows verdicts.** Open the Disks pane. Golem's rows should show
+   `OK` / `WATCH` / `FAIL`, not `(limited)`. Click a row with reasons; the
+   reasons should appear.
+
+   Result: _not yet run._
+
+2. **Raven shows `(limited)`.** Raven's rows should read `OK (limited)` or
+   `UNKNOWN (limited)` and show no verdict, and the standing hint about
+   needing a Tier 1 agent should be visible.
+
+   Result: _not yet run._
+
+3. **The stored payload is the summary shape, not the raw document.** On
+   Raven (read the db path from the manager config if this finds nothing at
+   the default location):
+
+   ```bash
+   sqlite3 /boot/config/plugins/unraid-manager/manager.db \
+     "SELECT length(payload) FROM node_state WHERE domain='smart';"
+   ```
+
+   Expected: single-digit KB per row, not ~300 KB.
+
+   ```bash
+   sqlite3 /boot/config/plugins/unraid-manager/manager.db \
+     "SELECT payload LIKE '%serial%' OR payload LIKE '%logical_unit%' FROM node_state WHERE domain='smart';"
+   ```
+
+   Expected: `0`.
+
+   Result: _not yet run._
+
 ## Notes for whoever runs the next one
 
 - **An API outage cannot drive the hysteresis ladder.** Every indicator proposes

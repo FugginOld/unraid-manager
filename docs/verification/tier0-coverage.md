@@ -178,6 +178,18 @@ seed fixtures were found to encode shapes the API cannot return.
     case, where the no-op is not harmless because a file either execve()s or
     it does not.
 
+18. **The `smart` domain now has a consumer, and Tier 0 is deliberately still
+    `(limited)`.** A Tier 0 row renders `OK (limited)` or `UNKNOWN (limited)`
+    — Unraid's own `smartStatus` verbatim, suffixed — with no verdict column
+    and no reasons. A Tier 1 row that has not been polled yet renders a dash,
+    never `(limited)`: a Tier 0 node CANNOT produce an assessment, because no
+    SCSI SMART structure crosses the GraphQL API at all, while an unpolled
+    Tier 1 node simply HAS NOT yet — one is a ceiling, the other is a clock,
+    and the pane must never render the two alike. Pinned off-box by
+    `disks_test.php` and `tests/js/views.mjs`; the live confirmation (Golem
+    shows verdicts, Raven shows `(limited)`) is one of the three checks
+    pending in `docs/verification/p2-checks.md`.
+
 - Raven's `disks` 504 root cause (box-side issue, not a blocker).
 
 - **Does `dynamix.cfg` store `hot`/`max` in the display unit, or always in

@@ -71,6 +71,15 @@ Domains split across two lanes:
 `disks` is slow because it is: 15s on a healthy box, and reproducibly past
 nginx's 60s gateway timeout on a loaded one. It must never sit in the hot path.
 
+**`daemon/smart.py`** owns one thing: judging a single SAS disk from the
+`smartctl --json` document a Tier 1 agent captured. It is pure and
+stdlib-only, and splits into `summarize()` — the one place a missing
+smartctl key becomes `None` — and the rules (`_fail_reasons`,
+`_watch_reasons`, `_advisories`) that read that flat summary and never touch
+the raw document again. The `smart` domain's stored payload is therefore a
+verdict plus the small summary, not the raw document: about 460 bytes per
+device against roughly 7.7 KB before.
+
 ### Three failure classes, deliberately distinct
 
 | Class | Meaning | Node reads as |

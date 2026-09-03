@@ -9,11 +9,20 @@ acting on a "simplify this" finding.
 Both suites must pass before anything is committed.
 
 ```bash
-python -m unittest discover -s tests/python        # 399 tests
+python -m unittest discover -s tests/python        # 491 tests
 bash tests/php/run.sh                              # 9 suites
 ```
 
 Neither touches a network or a live Unraid box, by rule. Fixtures only.
+
+**`php -f tests/php/<file>.php` alone is not a sufficient check.** A file can
+exit 0 with its own `$fails` counter at zero while still printing a PHP
+diagnostic — an `Undefined array key` warning from a mutated `??`/`isset()`
+chain, say — and only `bash tests/php/run.sh` treats a printed diagnostic as
+a failure. This is not hypothetical: during Task 4's SAS-verdict work, three
+separate mutants exited 0 with zero failed checks under `php -f` alone and
+were caught only by `run.sh`'s diagnostic rule. Run the whole suite, not one
+file in isolation, before trusting a green result.
 
 **On this Windows dev machine PHP is installed but not on the bash `PATH`:**
 

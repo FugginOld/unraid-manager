@@ -5,8 +5,14 @@ Every entry in **Rejected on sight** is tied to a commit where the simpler
 version shipped and broke something on real hardware. Arbitration order is in
 global CLAUDE.md and is not restated here.
 
-Pinned by `tests/php/policy_test.php` and `tests/python/test_source_policy.py`,
-which fail if a cited guard leaves the tree or a cited test stops asserting it.
+Pinned by `tests/php/policy_test.php`, which fails if a cited guard leaves the
+tree or a cited test stops asserting it. Four of those guards — stripping
+`serial_number`/`logical_unit_id` in `parse_smart`, no serial leak in
+`_disk_row`, no mutation string, no introspection query — moved to
+`tests/python/test_source_policy.py` during Task 3, which reads `collector.py`
+as an AST instead of scanning source text. It is cited from both files now,
+but it only covers the first direction: a cited guard leaving the tree. It
+does not see whether a cited test stopped asserting it.
 
 ## Scope
 

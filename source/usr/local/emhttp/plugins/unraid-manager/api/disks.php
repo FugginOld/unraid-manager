@@ -67,7 +67,9 @@ function um_fleet_disks(?SQLite3 $db): array {
         foreach ((is_array($smartPayload) ? $smartPayload['disks'] ?? [] : []) as $dev => $v) {
             $k = um_device_key($dev);
             // Legacy pre-Task-3 raw payloads store a bare null per device that
-            // could not be read; skip it rather than index into it below.
+            // could not be read. The `?? null` chains below would absorb that
+            // silently on their own; this guard just makes the intent explicit
+            // at the point the legacy value actually arrives.
             if ($k !== '' && is_array($v)) $verdicts[$k] = $v;
         }
         if ($tier >= 1 && $smartRow === null) {

@@ -207,6 +207,8 @@ check('an orphan is marked with its node\'s smart tier', $golemOrphan['smart_tie
 check('an orphan\'s smart reading keeps its own timestamp, distinct from the array clock',
       $golemOrphan['smart_fetched_at'] === '2026-09-01T02:00:00Z'
       && $golemOrphan['smart_fetched_at'] !== $golemOrphan['fetched_at']);
+check('an orphan carries the reasons behind its verdict',
+      $golemOrphan['reasons'][0] === 'device not found');
 
 $raven = $byDevice['Raven:/dev/sdc'] ?? null;
 check('a tier 0 disk is marked tier 0', $raven !== null && $raven['smart_tier'] === 0);
@@ -236,28 +238,67 @@ check('an unpolled tier 1 node is listed as stale for smart',
 check('every stale entry names its domain',
       count(array_filter($out['stale'], fn($s) => !isset($s['domain']))) === 0);
 
+/* collector.py's agent lane also returns 'unsupported' - "this node needs a
+   newer agent for %s" - for a tier 1 node whose agent predates the smart
+   probe. That status is retained with its last-good payload exactly like a
+   'disks' 504 is, and this is the ONLY thing telling the operator the
+   verdicts on screen are stale, not current. Deleting the elseif branch, or
+   relabelling its domain to 'disks', must both fail this. */
+$db->exec("INSERT INTO nodes VALUES('b8c9','Grove','1.2.3.11',1,1,1,'x','y','SENTINEL-KEY-NOT-FOR-EXPORT')");
+$db->exec("INSERT INTO node_state VALUES('b8c9','smart','unsupported',
+           'this node needs a newer agent for smart.verdict','2026-08-20T02:00:00Z','"
+          . SQLite3::escapeString($smart) . "')");
+$out = um_fleet_disks($db);
+$groveStale = array_values(array_filter($out['stale'],
+    fn($s) => $s['node'] === 'Grove' && $s['domain'] === 'smart'))[0] ?? null;
+check('an unsupported-agent node is stale for smart, not silently current',
+      $groveStale !== null && $groveStale['status'] === 'unsupported');
+check('the stale entry names the real reason',
+      $groveStale !== null && str_contains($groveStale['error'], 'newer agent'));
+check('the stale smart entry keeps the SMART clock, not the disks one',
+      $groveStale !== null && $groveStale['fetched_at'] === '2026-08-20T02:00:00Z');
+
 /* store.py's v4 migration copies node_state rows rather than clearing them, so
    a 'smart' row written by the PREVIOUS build can still hold the raw smartctl
    document shape until the slow lane repolls - including a bare null for a
    device that could not be read. That old shape has no 'verdict' key at all;
    it must read as "no verdict for this disk", not warn or fatal. This must
    use the real pre-Task-3 envelope (a 'disks' map, not a bare device map) and
-   devices that actually match Ember's disks payload (/dev/sdc, spare
-   /dev/sdz) - anything else lets $verdicts stay empty and never reach the
-   'present but has no verdict key' code path at all. */
+   devices that actually match Ember's payloads - a device is either PRESENT
+   with a verdictless raw dict (/dev/sdc physical, /dev/sdz spare, /dev/sdd
+   orphan, once Ember also gets an array payload below), or ABSENT entirely
+   (/dev/sdy, which matches nothing). Both cases must be tolerated, and they
+   are different code paths: `isset($verdicts[$key]) ? ...['verdict'] : null`
+   survives the ABSENT case (no entry at all) but not the PRESENT one (an
+   entry with no 'verdict' key), so both need their own device. */
 $db->exec("INSERT INTO nodes VALUES('f6a7','Ember','1.2.3.9',1,1,1,'x','y','SENTINEL-KEY-NOT-FOR-EXPORT')");
-$rawSmart = json_encode(['count' => 2, 'disks' => [
+$rawSmart = json_encode(['count' => 4, 'disks' => [
     '/dev/sdc' => ['temperature' => ['current' => 30], 'smart_status' => ['passed' => true]],
-    '/dev/sdz' => null]]);
+    '/dev/sdz' => ['temperature' => ['current' => 31]],
+    '/dev/sdd' => ['temperature' => ['current' => 29]],
+    '/dev/sdy' => null]]);
 $db->exec("INSERT INTO node_state VALUES('f6a7','disks','ok',NULL,'2026-09-01T01:00:00Z','"
           . SQLite3::escapeString($disks) . "')");
+/* Ember's own orphaned array slot (device 'sdd', same shape as Golem's) gives
+   the orphan-row builder a PRESENT-but-verdictless device too. */
+$db->exec("INSERT INTO node_state VALUES('f6a7','array','ok',NULL,'2026-09-01T00:30:00Z','"
+          . SQLite3::escapeString($array) . "')");
 $db->exec("INSERT INTO node_state VALUES('f6a7','smart','ok',NULL,'2026-09-01T02:00:00Z','"
           . SQLite3::escapeString($rawSmart) . "')");
 $out = um_fleet_disks($db);
 $ember = null;
-foreach ($out['disks'] as $row) if ($row['node'] === 'Ember') { $ember = $row; break; }
+foreach ($out['disks'] as $row) if ($row['node'] === 'Ember' && $row['device'] === '/dev/sdc') { $ember = $row; break; }
 check('an old raw smart payload does not crash the join', $ember !== null);
 check('an old raw smart payload yields no verdict', $ember !== null && $ember['verdict'] === null);
+
+$emberSpare = array_values(array_filter($out['spares'], fn($s) => $s['node'] === 'Ember'))[0] ?? null;
+check('a spare\'s legacy raw payload without a verdict key yields no verdict, not a crash',
+      $emberSpare !== null && $emberSpare['verdict'] === null);
+
+$emberOrphan = null;
+foreach ($out['disks'] as $row) if ($row['node'] === 'Ember' && $row['device'] === 'sdd') { $emberOrphan = $row; break; }
+check('an orphan\'s legacy raw payload without a verdict key yields no verdict, not a crash',
+      $emberOrphan !== null && $emberOrphan['verdict'] === null);
 
 /* A tier 1 node whose agent has never reported smart AND whose Unraid API has
    never reported disks either - a first-ever failure on both fronts. Before
@@ -272,6 +313,17 @@ check('a tier 1 node with no disks row at all still gets a disks stale entry',
       in_array('disks', $fenDomains, true));
 check('a tier 1 node with no disks row at all ALSO gets a smart stale entry',
       in_array('smart', $fenDomains, true));
+
+/* The daemon's own threshold is `d.min_tier <= int(tier or 0)` (collector.py
+   :310) - a future tier 2 node is polled for smart too. $tier >= 1 is the PHP
+   side of that same inequality; reverting it to === 1 would silently drop a
+   tier 2 node from the smart stale check with nothing here to notice. */
+$db->exec("INSERT INTO nodes VALUES('c9d0','Fig','1.2.3.12',1,2,1,'x','y','SENTINEL-KEY-NOT-FOR-EXPORT')");
+$out = um_fleet_disks($db);
+$figStale = array_values(array_filter($out['stale'],
+    fn($s) => $s['node'] === 'Fig' && $s['domain'] === 'smart'));
+check('a tier 2 node above the tier>=1 threshold is flagged pending too, not silently current',
+      count($figStale) === 1 && $figStale[0]['error'] === 'no SMART poll recorded yet');
 
 echo $fails === 0 ? "disks: all pass\n" : "disks: $fails FAILED\n";
 exit($fails === 0 ? 0 : 1);

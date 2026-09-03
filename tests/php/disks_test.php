@@ -214,6 +214,8 @@ check('an orphan carries the reasons behind its verdict',
 
 $raven = $byDevice['Raven:/dev/sdc'] ?? null;
 check('a tier 0 disk is marked tier 0', $raven !== null && $raven['smart_tier'] === 0);
+$ravenSpare = array_values(array_filter($out['spares'], fn($s) => $s['node'] === 'Raven'))[0] ?? null;
+check('a tier 0 spare is marked tier 0', $ravenSpare !== null && $ravenSpare['smart_tier'] === 0);
 check('a tier 0 disk has no verdict', $raven !== null && $raven['verdict'] === null);
 $ravenStale = array_filter($out['stale'], fn($s) => $s['node'] === 'Raven'
                                                 && $s['domain'] === 'smart');
@@ -237,7 +239,8 @@ $cedarStale = array_values(array_filter($out['stale'],
 check('an unpolled tier 1 node is listed as stale for smart',
       count($cedarStale) === 1
       && $cedarStale[0]['error'] === 'no SMART poll recorded yet'
-      && $cedarStale[0]['status'] === 'unknown');
+      && $cedarStale[0]['status'] === 'unknown'
+      && $cedarStale[0]['fetched_at'] === null);
 check('every stale entry names its domain',
       count(array_filter($out['stale'], fn($s) => !isset($s['domain']))) === 0);
 

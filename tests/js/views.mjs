@@ -59,6 +59,14 @@ export const UNPOLLED = {
   ...DISK, node: 'Cedar', node_id: 'n3', device: '/dev/sdd',
   verdict: null, reasons: [], smart_tier: 1,
 }
+/* Fix round 1, non-blocking 1: the highest-stakes cell this pane renders had
+   no fixture at all - both OK -> um-ok and FAIL -> um-crit survived mutation
+   with nothing here to notice a wrong class either way. */
+const FAILED = {
+  ...DISK, node: 'Golem', node_id: 'n2', device: '/dev/sde',
+  verdict: 'FAIL', reasons: ['reallocated sectors: 200'],
+  smart_tier: 1, smart_fetched_at: '2026-09-01T02:00:00Z',
+}
 
 try {
   /* Column sorting (P1 triage P2-7), on the comparator's own terms - which is
@@ -208,14 +216,85 @@ try {
     check('an unpolled tier 1 disk is not labelled limited', !html.includes('(limited)'))
   }
   {
+    /* Fix round 1, non-blocking 1: FAIL -> um-crit had never been exercised. */
+    const html = await renderView(Disks, { data: { disks: [FAILED], spares: [], stale: [] } })
+    check('a FAIL verdict is styled as critical', html.includes('um-crit'))
+  }
+  {
+    /* Fix round 1, non-blocking 4: a tier 1 disk with no verdict yet but a
+       Tier-0-shaped smart_status of 'FAIL' must still read as not-assessed -
+       the verdict comes only from the endpoint's own `verdict` field, never
+       synthesised from smart_status. Scoped to the row: the "FAIL" filter
+       button renders that word on every render of this view regardless of
+       any fixture, the same trap blocking 1 above was rewritten to avoid. */
+    const html = await renderView(Disks, {
+      data: { disks: [{ ...UNPOLLED, smart_status: 'FAIL' }], spares: [], stale: [] },
+    })
+    const row = (html.split('<tr').find(r => r.includes('/dev/sdd')) ?? '').split('</tr>')[0]
+    check('a tier 1 disk with no verdict never shows FAIL off smart_status alone',
+          row !== '' && !row.includes('FAIL'))
+  }
+  {
+    /* Fix round 1, non-blocking 2: anyTier0 was entirely unpinned - hardcoding
+       it true or false survived every existing check. */
+    const htmlWithTier0 = await renderView(Disks, { data: { disks: [DISK], spares: [], stale: [] } })
+    check('the Tier 0 hint appears when a tier 0 row is present',
+          /Tier 1 agent/.test(htmlWithTier0))
+    const htmlAllTier1 = await renderView(Disks, { data: { disks: [ASSESSED], spares: [], stale: [] } })
+    check('the Tier 0 hint is absent when every row is tier 1',
+          !/Tier 1 agent/.test(htmlAllTier1))
+  }
+  {
     /* The stale copy is per-domain. Today's sentence - "no disk list yet, this
        node has not been polled since it was enrolled" - is simply false for a
-       node whose disk list is fine and whose SMART call failed. */
+       node whose disk list is fine and whose SMART call failed.
+       Fix round 1, blocking 1: the first cut of this check asserted
+       html.includes('SMART'), which is true of every render of this view -
+       a filter button reads "Any SMART" regardless of any stale entry - and
+       its second clause never matched the fixture's own fetched_at, so it
+       was inert too. Both sentences are asserted against
+       EACH OTHER instead, for all four (domain x fetched_at) combinations,
+       so a v-if flipped either way, or the word "SMART" deleted from the
+       smart sentence, fails one of these four. */
+    const staleOf = (entry) =>
+      renderView(Disks, { data: { disks: [], spares: [], stale: [entry] } })
+
+    const smartFailed = await staleOf({ node: 'Golem', node_id: 'n2', domain: 'smart',
+      status: 'error', error: 'ssh exited 255', fetched_at: '2026-09-01T02:00:00Z' })
+    check('a smart staleness with a prior reading says SMART, not disk list',
+          smartFailed.includes('SMART assessment') && !smartFailed.includes('disk list'))
+
+    const smartNeverPolled = await staleOf({ node: 'Golem', node_id: 'n2', domain: 'smart',
+      status: 'unknown', error: 'no smart poll recorded yet', fetched_at: null })
+    check('a smart staleness never polled also says SMART, not disk list',
+          smartNeverPolled.includes('SMART assessment') && !smartNeverPolled.includes('disk list'))
+
+    const disksFailed = await staleOf({ node: 'Golem', node_id: 'n2', domain: 'disks',
+      status: 'error', error: 'HTTP 504 from 10.0.0.9', fetched_at: '2026-08-27T09:00:00Z' })
+    check('a disks staleness with a prior reading says disk list, not SMART',
+          disksFailed.includes('disk list') && !disksFailed.includes('SMART assessment'))
+
+    const disksNeverPolled = await staleOf({ node: 'Golem', node_id: 'n2', domain: 'disks',
+      status: 'unknown', error: 'no disks poll recorded yet', fetched_at: null })
+    check('a disks staleness never polled also says disk list, not SMART',
+          disksNeverPolled.includes('disk list') && !disksNeverPolled.includes('SMART assessment'))
+  }
+  {
+    /* Fix round 1, blocking 2: since Task 4 a single node can emit BOTH a
+       disks and a smart stale entry for the SAME node_id. This does not prove
+       the :key itself - SSR never diffs a patch, so a duplicate key is
+       invisible to it by construction (the source pin in frontend_test.php
+       is what closes that) - but it does prove the two entries still render
+       as two distinct paragraphs rather than one clobbering the other. */
     const html = await renderView(Disks, { data: { disks: [], spares: [], stale: [
+      { node: 'Golem', node_id: 'n2', domain: 'disks', status: 'error',
+        error: 'HTTP 504 from 10.0.0.9', fetched_at: '2026-08-27T09:00:00Z' },
       { node: 'Golem', node_id: 'n2', domain: 'smart', status: 'error',
-        error: 'ssh exited 255', fetched_at: '2026-09-01T02:00:00Z' }] } })
-    check('a smart staleness says SMART, not disk list',
-          html.includes('SMART') && !html.includes('no disk list yet'))
+        error: 'ssh exited 255', fetched_at: '2026-09-01T02:00:00Z' },
+    ] } })
+    check('a node with both a disks and a smart staleness gets two paragraphs',
+          (html.match(/um-node-stale/g) || []).length === 2
+          && html.includes('disk list') && html.includes('SMART assessment'))
   }
 
   /* ── never a blank pane, never a second wrong claim (Task 13 items 6, 7) ── */

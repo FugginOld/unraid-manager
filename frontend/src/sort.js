@@ -36,6 +36,11 @@ export function compareValues (x, y, asc = true) {
   return (less ? -1 : 1) * (asc ? 1 : -1)
 }
 
+// `key` is a field name for most columns, but a column can also need a value
+// that is not a field at all - Disks.vue's verdict column sorts by triage
+// severity (fleet.js's stateRank precedent), not by the verdict string. A
+// function reads that value without bolting a synthetic field onto every row.
 export function sortRows (rows, key, asc = true) {
-  return [...rows].sort((a, b) => compareValues(a[key], b[key], asc))
+  const read = typeof key === 'function' ? key : (row) => row[key]
+  return [...rows].sort((a, b) => compareValues(read(a), read(b), asc))
 }

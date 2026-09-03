@@ -70,6 +70,22 @@ function verdictClass (disk) {
   return VERDICT_CLASS[verdictKey(disk)] || 'um-unknown'
 }
 
+// Fix round 1, blocking 3: triage priority for the column's header click, the
+// same asymmetry fleet.js's stateRank applies to node states. A real finding
+// leads (FAIL before WATCH, since a failure outranks a warning); UNKNOWN is a
+// claim the assessment could not make; OK is a clean result. Alphabetical
+// order puts WATCH last, which is wrong for the one sort an operator actually
+// wants on this column. Everything with no real verdict at all - tier 0,
+// no-disk, not-yet-assessed - sorts after every value that has one, fleet.js's
+// rule for a state it does not recognise, restated for a verdict this column
+// cannot know.
+const VERDICT_RANK = { FAIL: 0, WATCH: 1, UNKNOWN: 2, OK: 3 }
+const VERDICT_LAST = Object.keys(VERDICT_RANK).length
+function verdictRank (disk) {
+  const rank = VERDICT_RANK[verdictKey(disk)]
+  return rank === undefined ? VERDICT_LAST : rank
+}
+
 const expanded = ref(null)
 function rowKey (disk) { return disk.node_id + ':' + disk.device }
 function toggle (disk) {
@@ -90,7 +106,7 @@ const rows = computed(() => {
   // sort as if it were 0 C and lead an ascending sort, reading as the coldest
   // drive in the fleet (P1 triage P2-7). Pinned twice - as a function in
   // views.mjs, and through the header click in interact.mjs.
-  return sortRows(all, sortKey.value, sortAsc.value)
+  return sortRows(all, sortKey.value === 'verdict' ? verdictRank : sortKey.value, sortAsc.value)
 })
 
 const anyTier0 = computed(() =>
@@ -186,7 +202,7 @@ const spares = computed(() => data.value?.spares ?? [])
             <th @click="sortBy('temp')">Temp &deg;C</th>
             <th @click="sortBy('array_status')">Array</th>
             <th @click="sortBy('errors')">Errors</th>
-            <th @click="sortBy('smart_status')">SMART</th>
+            <th @click="sortBy('verdict')">Verdict</th>
           </tr>
         </thead>
         <tbody>

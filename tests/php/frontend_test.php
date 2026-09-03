@@ -468,6 +468,14 @@ check('the never-polled and failed-poll stale cases are told apart by fetched_at
       (bool) preg_match('/v-if="entry\.fetched_at"/', $disksTemplate)
       && str_contains($disksTemplate, 'v-else'));
 
+/* Fix round 1, blocking 2: since Task 4 a single node can emit BOTH a disks
+   and a smart stale entry with the same node_id, so keying on node_id alone
+   collides. SSR cannot see the collision - it never diffs a patch, so a
+   duplicate :key is invisible to it by construction - which is why this has
+   to be a source pin rather than something views.mjs can catch on its own. */
+check('the stale list keys on node_id AND domain, not node_id alone',
+      (bool) preg_match('/:key="entry\.node_id[^"]*entry\.domain"/', $disksTemplate));
+
 /* Task 13, items 6 and 7, applied to this screen: a pane that renders nothing
    while managerd is down, and an empty state that contradicts the shell's
    "database could not be read" banner, were both real defects there. */

@@ -261,6 +261,31 @@ try {
     v.unmount()
   }
 
+  /* ── the Verdict header sorts by triage severity (Fix round 1, blocking 3) ──
+     Alphabetical order on the verdict STRING is FAIL, OK, UNKNOWN, WATCH -
+     putting WATCH last, which is exactly backwards for a triage column. This
+     fleet has one of each of the four real verdicts, so severity order
+     (FAIL, WATCH, UNKNOWN, OK) and alphabetical order disagree on every
+     position; only the severity order can pass this check. */
+  {
+    const FAILED = disk({ node: 'Raven', node_id: 'n1', device: '/dev/sdf', verdict: 'FAIL' })
+    const WATCHED = disk({ node: 'Raven', node_id: 'n1', device: '/dev/sdg', verdict: 'WATCH' })
+    const UNKNOWND = disk({ node: 'Raven', node_id: 'n1', device: '/dev/sdh', verdict: 'UNKNOWN' })
+    const OKD = disk({ node: 'Raven', node_id: 'n1', device: '/dev/sdi', verdict: 'OK' })
+    const v = await mount(Disks, { data: { disks: [OKD, UNKNOWND, WATCHED, FAILED], spares: [], stale: [] } })
+    const order = () => v.rows().map(tr => v.cells(tr)[DEVICE_COL])
+
+    await v.click(v.byText('th', 'Verdict'))
+    check('the Verdict header sorts by triage severity, not the verdict string',
+          order().join() === ['/dev/sdf', '/dev/sdg', '/dev/sdh', '/dev/sdi'].join())
+
+    await v.click(v.byText('th', 'Verdict'))
+    check('clicking it again reverses the severity order',
+          order().join() === ['/dev/sdi', '/dev/sdh', '/dev/sdg', '/dev/sdf'].join())
+
+    v.unmount()
+  }
+
   /* ── the verdict row's expand (Task 5) ───────────────────────────────── */
   {
     /* An unexplained WATCH sends the operator to a shell with smartctl, which
@@ -268,7 +293,12 @@ try {
     const v = await mount(Disks, { data: { disks: [ASSESSED], spares: [], stale: [] } })
     check('reasons are hidden until asked for', !v.text().includes('grown defects: 4'))
     await v.click(v.host.querySelector('tbody tr'))
-    check('clicking a row reveals its reasons', v.text().includes('grown defects: 4'))
+    /* Fix round 1, non-blocking 3: asserting only reasons[0] survives a
+       mutation that drops every reason after the first. The full joined
+       string, separator included, proves BOTH reasons render and that
+       ' · ' is what joins them. */
+    check('clicking a row reveals both reasons, joined by the separator',
+          v.text().includes('grown defects: 4 · last self-test 21316 h ago'))
     await v.click(v.host.querySelector('tbody tr'))
     check('clicking again hides them', !v.text().includes('grown defects: 4'))
     v.unmount()

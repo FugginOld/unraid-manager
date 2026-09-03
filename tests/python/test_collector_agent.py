@@ -63,15 +63,26 @@ class TestCollectAgent(unittest.TestCase):
         # healthy drives lost because of one. scripts/agent-exec's own
         # doctrine: a single dead drive must not blank every healthy one
         # beside it.
+        #
+        # Completion pass: '/dev/sdd' is a scalar that IS valid JSON (a plain
+        # int) and '/dev/sde' is a dict - the shape a peer agent sends the
+        # already-parsed document in, plausible version skew per
+        # agentclient.exec_response returning reply.get('data') unvalidated.
+        # Both used to escape the ValueError-only guard: doc.pop() on an int
+        # raises AttributeError, and json.loads() on a dict raises TypeError
+        # before .pop is ever reached - either one still blanked the node.
         raw = context.fixture('agent-smart-golem-sda.json')
         got = self.collect(lambda node, verb, args, timeout: {
             '/dev/sda': raw, '/dev/sdb': raw, '/dev/sdc': 'not json',
+            '/dev/sdd': '12345', '/dev/sde': {'smart_status': {'passed': True}},
         })
         self.assertEqual('ok', got.status)
         self.assertEqual('OK', got.payload['disks']['/dev/sda']['verdict'])
         self.assertEqual('OK', got.payload['disks']['/dev/sdb']['verdict'])
         self.assertEqual('UNKNOWN', got.payload['disks']['/dev/sdc']['verdict'])
-        self.assertEqual(3, got.payload['count'])
+        self.assertEqual('UNKNOWN', got.payload['disks']['/dev/sdd']['verdict'])
+        self.assertEqual('UNKNOWN', got.payload['disks']['/dev/sde']['verdict'])
+        self.assertEqual(5, got.payload['count'])
 
     def test_an_unreadable_disk_survives_as_unknown_not_as_absent(self):
         # The agent sends None for a drive it could not read. Dropping it here

@@ -247,6 +247,12 @@ try {
     const row = (html.split('<tr').find(r => r.includes('/dev/sde')) ?? '').split('</tr>')[0]
     check('a tier 2 disk shows its real verdict, not a limited placeholder',
           row !== '' && row.includes('FAIL') && !row.includes('(limited)'))
+    /* Completion pass: the row-scoped check above cannot see the fleet-level
+       hint, and none of the three anyTier0 checks used a tier-2 row - the
+       only value that tells `< 1` from `!== 1` apart. A fleet with nothing
+       but a tier-2 (agent-capable) disk must not tell the operator it needs
+       a Tier 1 agent it already has a better one than. */
+    check('a tier 2 fleet raises no Tier 1 agent hint', !/Tier 1 agent/.test(html))
   }
   {
     /* Fix round 1, non-blocking 1: FAIL -> um-crit had never been exercised. */
@@ -300,7 +306,7 @@ try {
        node whose disk list is fine and whose SMART call failed.
        Fix round 1, blocking 1: the first cut of this check asserted
        html.includes('SMART'), which is true of every render of this view -
-       a filter button reads "Any SMART" regardless of any stale entry - and
+       a filter button reads "Any verdict" regardless of any stale entry - and
        its second clause never matched the fixture's own fetched_at, so it
        was inert too. Both sentences are asserted against
        EACH OTHER instead, for all four (domain x fetched_at) combinations,

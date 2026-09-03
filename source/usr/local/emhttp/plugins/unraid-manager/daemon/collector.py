@@ -415,21 +415,26 @@ def parse_smart(data):
             continue
         try:
             doc = json.loads(raw)
-        except ValueError:
+            doc.pop('serial_number', None)
+            doc.pop('logical_unit_id', None)
+        except (ValueError, TypeError, AttributeError):
             # A different fact from "no data": the agent DID send something for
-            # this device, smartctl just did not hand back JSON (a truncated
-            # capture, a stray error line on stdout). Reusing smart.verdict(None)'s
-            # "could not read this device" would blame smartctl for a read that
-            # may have gone fine - this is the manager failing to parse the
-            # reply, not the drive refusing to answer. One bad device must not
-            # cost the other 36 healthy ones beside it (scripts/agent-exec's own
-            # doctrine), so it still keeps its key, as UNKNOWN with its own reason.
+            # this device, smartctl just did not hand back a JSON object we can
+            # strip keys from - not JSON at all (ValueError), or JSON that
+            # parsed to something other than a dict: a scalar (AttributeError
+            # on .pop) or a list (TypeError - list.pop takes an index, not a
+            # key). A peer agent sending the already-parsed document instead of
+            # raw text (TypeError from json.loads itself, on a dict) lands here
+            # too. Reusing smart.verdict(None)'s "could not read this device"
+            # would blame smartctl for a read that may have gone fine - this is
+            # the manager failing to make sense of the reply, not the drive
+            # refusing to answer. One bad device must not cost the other 36
+            # healthy ones beside it (scripts/agent-exec's own doctrine), so it
+            # still keeps its key, as UNKNOWN with its own reason.
             unreadable = smart.verdict(None)
             unreadable['reasons'] = ['smartctl output was not valid JSON']
             disks[device] = unreadable
             continue
-        doc.pop('serial_number', None)
-        doc.pop('logical_unit_id', None)
         disks[device] = smart.verdict(doc)
     return {'count': len(disks), 'disks': disks}
 

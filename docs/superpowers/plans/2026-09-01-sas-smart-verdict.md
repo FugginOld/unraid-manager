@@ -668,7 +668,8 @@ with:
     fails = _fail_reasons(summary)
     watches = _watch_reasons(summary)
     state = 'FAIL' if fails else ('WATCH' if watches else 'OK')
-    # reasons[0] is always the deciding one, and nothing notable is discarded.
+    # reasons[0] is the deciding one for FAIL/WATCH, not for OK (where fails
+    # and watches are both empty); nothing notable is discarded either way.
     return _result(state, fails + watches + _advisories(summary), summary)
 ```
 

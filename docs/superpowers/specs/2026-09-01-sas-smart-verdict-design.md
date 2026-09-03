@@ -101,8 +101,10 @@ one test file, and it can be reasoned about without reading the collector.
 Every rule that fires appends its text to `reasons`. The verdict is `FAIL` if
 any FAIL rule fired, else `WATCH` if any WATCH rule fired, else `OK` or
 `UNKNOWN` per the rules below. `reasons` is ordered FAIL entries first, then
-WATCH, then advisories, so `reasons[0]` is always the deciding one and the
-operator still sees everything else that is notable.
+WATCH, then advisories, so `reasons[0]` is the deciding one for a FAIL or a
+WATCH verdict - but not for OK, where fails and watches are both empty and
+`reasons[0]` (if present at all) is just the first advisory. The operator
+still sees everything else that is notable either way.
 
 ### FAIL
 

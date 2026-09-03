@@ -49,7 +49,7 @@ const NOT_YET = 'not assessed yet'
 // drift apart the way they did once already.
 function verdictKey (disk) {
   if (disk.model === null) return NO_DISK
-  if (disk.smart_tier !== 1) return LIMITED
+  if (disk.smart_tier < 1) return LIMITED
   return disk.verdict || NOT_YET
 }
 
@@ -118,7 +118,7 @@ const rows = computed(() => {
 })
 
 const anyTier0 = computed(() =>
-  (data.value?.disks ?? []).some(d => d.smart_tier !== 1))
+  (data.value?.disks ?? []).some(d => d.smart_tier < 1))
 
 const nodes = computed(() => [...new Set((data.value?.disks ?? []).map(d => d.node))])
 const stale = computed(() => data.value?.stale ?? [])
@@ -189,7 +189,7 @@ const spares = computed(() => data.value?.spares ?? [])
       </p>
 
       <p>
-        <button type="button" @click="smartFilter = ''">Any SMART</button>
+        <button type="button" @click="smartFilter = ''">Any verdict</button>
         <button type="button" @click="smartFilter = 'OK'">OK</button>
         <button type="button" @click="smartFilter = 'WATCH'">WATCH</button>
         <button type="button" @click="smartFilter = 'FAIL'">FAIL</button>

@@ -65,7 +65,13 @@ $smart = json_encode(['count' => 3, 'disks' => [
     '/dev/sdc' => ['verdict' => 'WATCH',
                    'reasons' => ['grown defects: 4', 'last self-test 21316 h ago'],
                    'summary' => ['model' => 'ST10000NM0226', 'power_on_hours' => 55161]],
-    '/dev/sdd' => ['verdict' => 'FAIL', 'reasons' => ['device not found'],
+    /* A shape the verdict chain actually produces: parse_smart/smart.verdict()
+       never emit "device not found" - an unreadable device (doc is not a
+       dict, or the agent sent None/'') is UNKNOWN with "smartctl could not
+       read this device". This file's own header memorialises a fixture that
+       invented a shape ("name":"sdc") and hid a join matching 0 of 72 disks -
+       this row used to make the same mistake. */
+    '/dev/sdd' => ['verdict' => 'UNKNOWN', 'reasons' => ['smartctl could not read this device'],
                    'summary' => ['model' => null, 'power_on_hours' => null]],
     '/dev/sdz' => ['verdict' => 'OK', 'reasons' => ['grown defect count not reported'],
                    'summary' => ['model' => 'MG07SCA14TE', 'power_on_hours' => 100]]]]);
@@ -204,13 +210,13 @@ check('a spare carries the reasons behind its verdict',
    clock (a fast domain); smart_fetched_at must stay the SMART domain's clock
    and the two must differ, the same discipline as the disks/array split. */
 $golemOrphan = $byDevice['Golem:sdd'];
-check('an orphan is joined to its node\'s smart verdict', $golemOrphan['verdict'] === 'FAIL');
+check('an orphan is joined to its node\'s smart verdict', $golemOrphan['verdict'] === 'UNKNOWN');
 check('an orphan is marked with its node\'s smart tier', $golemOrphan['smart_tier'] === 1);
 check('an orphan\'s smart reading keeps its own timestamp, distinct from the array clock',
       $golemOrphan['smart_fetched_at'] === '2026-09-01T02:00:00Z'
       && $golemOrphan['smart_fetched_at'] !== $golemOrphan['fetched_at']);
 check('an orphan carries the reasons behind its verdict',
-      $golemOrphan['reasons'][0] === 'device not found');
+      $golemOrphan['reasons'][0] === 'smartctl could not read this device');
 
 $raven = $byDevice['Raven:/dev/sdc'] ?? null;
 check('a tier 0 disk is marked tier 0', $raven !== null && $raven['smart_tier'] === 0);

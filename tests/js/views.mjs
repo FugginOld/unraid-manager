@@ -138,6 +138,16 @@ try {
      reading something else, with everything else green. */
   check('the orphan row uses one word for the state, the one the filter offers',
         (orphanRow.match(/no disk/g) || []).length === 2)
+  /* Carried item 4: verdictClass()'s `|| 'um-unknown'` fallback is unpinned -
+     a no-disk or limited cell could silently be painted with a real OK/WATCH/
+     FAIL class and nothing here would notice. DISK is tier 0 (LIMITED);
+     ORPHAN has model: null (NO_DISK) - neither key is in VERDICT_CLASS, so
+     both must fall through to the same um-unknown class on their own cell,
+     the last <td> in each row. */
+  check('a tier 0 disk (LIMITED) falls back to the um-unknown verdict class',
+        diskRow.split('<td').pop().includes('um-unknown'))
+  check('an orphan slot (NO_DISK) falls back to the um-unknown verdict class too',
+        orphanRow.split('<td').pop().includes('um-unknown'))
 
   /* ── null-vs-zero, the family this repo has shipped wrong twice ────────── */
   const htmlZeroErrors = await renderView(Disks, { data: { disks: [DISK], spares: [], stale: [] } })
@@ -216,6 +226,27 @@ try {
        these two the same way is the absent-versus-unable defect on screen. */
     const html = await renderView(Disks, { data: { disks: [UNPOLLED], spares: [], stale: [] } })
     check('an unpolled tier 1 disk is not labelled limited', !html.includes('(limited)'))
+    /* Carried item 3: verdictText's NOT_YET branch returning '—' is unpinned -
+       returning the raw internal key ('not assessed yet') instead survives
+       every check above, since that string also never contains 'limited'.
+       Row-scoped so a stray em dash elsewhere on the page cannot pass this. */
+    const row = (html.split('<tr').find(r => r.includes('/dev/sdd')) ?? '').split('</tr>')[0]
+    const lastCell = row.split('<td').pop()
+    check('an unpolled tier 1 disk shows a dash, not the raw internal key',
+          />\s*—\s*</.test(lastCell) && !lastCell.includes('not assessed'))
+  }
+  {
+    /* IMPORTANT 1 (whole-branch review): api/disks.php treats any tier >= 1 as
+       agent-capable, but verdictKey/anyTier0 read `smart_tier !== 1` - a tier 2
+       node (an agent ahead of the manager's own minimum) fell into the LIMITED
+       bucket, so an assessed FAIL rendered as "OK (limited)": this branch's
+       own invariant, inverted. Only `< 1` is really "no agent". */
+    const html = await renderView(Disks, {
+      data: { disks: [{ ...FAILED, smart_tier: 2 }], spares: [], stale: [] },
+    })
+    const row = (html.split('<tr').find(r => r.includes('/dev/sde')) ?? '').split('</tr>')[0]
+    check('a tier 2 disk shows its real verdict, not a limited placeholder',
+          row !== '' && row.includes('FAIL') && !row.includes('(limited)'))
   }
   {
     /* Fix round 1, non-blocking 1: FAIL -> um-crit had never been exercised. */
@@ -254,6 +285,14 @@ try {
     const htmlAllTier1 = await renderView(Disks, { data: { disks: [ASSESSED], spares: [], stale: [] } })
     check('the Tier 0 hint is absent when every row is tier 1',
           !/Tier 1 agent/.test(htmlAllTier1))
+    /* Carried item 2: anyTier0's `.some` survives mutation to `.every` -
+       both checks above use a homogeneous fleet (all tier 0, or all tier 1),
+       the one case that cannot tell `.some` from `.every` apart. A mixed
+       fleet is the only case that discriminates, and the exact case the
+       hint exists for. */
+    const htmlMixed = await renderView(Disks, { data: { disks: [DISK, ASSESSED], spares: [], stale: [] } })
+    check('the Tier 0 hint appears for a mixed tier 0 / tier 1 fleet',
+          /Tier 1 agent/.test(htmlMixed))
   }
   {
     /* The stale copy is per-domain. Today's sentence - "no disk list yet, this

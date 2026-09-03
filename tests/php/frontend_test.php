@@ -535,5 +535,23 @@ check('the sort comparison is a module, not an inline closure',
 check('the disks view uses it rather than its own comparator',
       str_contains($disks, 'sortRows(') && !preg_match('/\.sort\(\(a, b\)/', $disks));
 
+/* IMPORTANT 2 (whole-branch review): Disks.vue's reasons cell carries a value
+   off the drive's own firmware (the self-test result string), and its own
+   comment says that is why the cell is plain {{ }} interpolation and never
+   v-html. A comment is not a guard - it survived a reviewer swapping the cell
+   to v-html with all four suites green. Pinned as code instead, repo-wide:
+   vue_code_only() strips that very comment out first, so this cannot trip on
+   the sentence that names the rule, only on an actual v-html directive. */
+$vueFiles = new RegexIterator(
+    new RecursiveIteratorIterator(new RecursiveDirectoryIterator($src, FilesystemIterator::SKIP_DOTS)),
+    '/\.vue$/');
+$vHtmlFile = null;
+foreach ($vueFiles as $file) {
+    if (str_contains(vue_code_only((string) file_get_contents($file->getPathname())), 'v-html')) {
+        $vHtmlFile = $file->getPathname();
+    }
+}
+check('no .vue source uses v-html anywhere in the tree', $vHtmlFile === null);
+
 echo $fails === 0 ? "frontend: all pass\n" : "frontend: $fails FAILED\n";
 exit($fails === 0 ? 0 : 1);

@@ -175,6 +175,12 @@ function um_fleet_disks(?SQLite3 $db): array {
         }
         foreach ($payload['spares'] ?? [] as $spare) {
             $spareKey = um_device_key($spare['device'] ?? null);
+            /* verdict/reasons/smart_tier/smart_fetched_at are populated here
+               for parity with the disk row shape above - Disks.vue's Spares
+               table does not render any of them. That is deliberate, not an
+               oversight: the table's own hint says every spare also appears
+               in the main disks table, and that is where the operator reads
+               its verdict. */
             $spares[] = ['node' => $node['name'], 'node_id' => $node['id'],
                          'model' => $spare['name'] ?? null,
                          'device' => $spare['device'] ?? null,

@@ -119,19 +119,19 @@ evidence is not a check (see the standing rule above).
    Result: _not yet run._
 
 3. **The stored payload is the summary shape, not the raw document.** On
-   Raven (read the db path from the manager config if this finds nothing at
-   the default location):
+   Raven. `manager.db` is never on flash (`store.validate_db_path` refuses
+   `/boot`) - it lives at `db_path/manager.db`, and `db_path` is the value
+   configured on the settings page, recorded in `manager.cfg`:
 
    ```bash
-   sqlite3 /boot/config/plugins/unraid-manager/manager.db \
-     "SELECT length(payload) FROM node_state WHERE domain='smart';"
+   DB="$(grep '^db_path=' /boot/config/plugins/unraid-manager/manager.cfg | cut -d= -f2-)/manager.db"
+   sqlite3 "$DB" "SELECT length(payload) FROM node_state WHERE domain='smart';"
    ```
 
    Expected: single-digit KB per row, not ~300 KB.
 
    ```bash
-   sqlite3 /boot/config/plugins/unraid-manager/manager.db \
-     "SELECT payload LIKE '%serial%' OR payload LIKE '%logical_unit%' FROM node_state WHERE domain='smart';"
+   sqlite3 "$DB" "SELECT payload LIKE '%serial%' OR payload LIKE '%logical_unit%' FROM node_state WHERE domain='smart';"
    ```
 
    Expected: `0`.

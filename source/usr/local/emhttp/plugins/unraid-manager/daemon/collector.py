@@ -413,7 +413,21 @@ def parse_smart(data):
         if not raw:
             disks[device] = smart.verdict(None)
             continue
-        doc = json.loads(raw)
+        try:
+            doc = json.loads(raw)
+        except ValueError:
+            # A different fact from "no data": the agent DID send something for
+            # this device, smartctl just did not hand back JSON (a truncated
+            # capture, a stray error line on stdout). Reusing smart.verdict(None)'s
+            # "could not read this device" would blame smartctl for a read that
+            # may have gone fine - this is the manager failing to parse the
+            # reply, not the drive refusing to answer. One bad device must not
+            # cost the other 36 healthy ones beside it (scripts/agent-exec's own
+            # doctrine), so it still keeps its key, as UNKNOWN with its own reason.
+            unreadable = smart.verdict(None)
+            unreadable['reasons'] = ['smartctl output was not valid JSON']
+            disks[device] = unreadable
+            continue
         doc.pop('serial_number', None)
         doc.pop('logical_unit_id', None)
         disks[device] = smart.verdict(doc)

@@ -4,6 +4,7 @@ import unittest
 import context
 import agentclient
 import collector
+import smart
 
 
 class TestCollectAgent(unittest.TestCase):
@@ -46,8 +47,31 @@ class TestCollectAgent(unittest.TestCase):
         self.assertIn('/dev/nope', got.error)
 
     def test_a_shape_we_do_not_understand_is_an_error_not_a_crash(self):
-        got = self.collect(lambda node, verb, args, timeout: {'/dev/sda': 'not json'})
+        # Envelope-level malformed: the whole reply is not even the
+        # {device: raw text} map parse_smart expects, so there is no single
+        # device to blame it on - `.items()` itself fails, and the domain as a
+        # whole is what could not be read. This must still become `error`
+        # (IMPORTANT 3): a wrong-shaped device is a different, per-device
+        # failure now, tested separately below.
+        got = self.collect(lambda node, verb, args, timeout: 'not even a device map')
         self.assertEqual('error', got.status)
+
+    def test_one_devices_garbage_json_does_not_blank_the_whole_node(self):
+        # IMPORTANT 3: a single device whose smartctl stdout is not JSON used
+        # to raise out of parse_smart, and collect_agent's outer catch turned
+        # the ENTIRE node's smart domain into `error` with payload None - 36
+        # healthy drives lost because of one. scripts/agent-exec's own
+        # doctrine: a single dead drive must not blank every healthy one
+        # beside it.
+        raw = context.fixture('agent-smart-golem-sda.json')
+        got = self.collect(lambda node, verb, args, timeout: {
+            '/dev/sda': raw, '/dev/sdb': raw, '/dev/sdc': 'not json',
+        })
+        self.assertEqual('ok', got.status)
+        self.assertEqual('OK', got.payload['disks']['/dev/sda']['verdict'])
+        self.assertEqual('OK', got.payload['disks']['/dev/sdb']['verdict'])
+        self.assertEqual('UNKNOWN', got.payload['disks']['/dev/sdc']['verdict'])
+        self.assertEqual(3, got.payload['count'])
 
     def test_an_unreadable_disk_survives_as_unknown_not_as_absent(self):
         # The agent sends None for a drive it could not read. Dropping it here
@@ -88,6 +112,16 @@ class TestCollectAgent(unittest.TestCase):
 
 
 class TestParseSmart(unittest.TestCase):
+    def test_garbage_json_is_unknown_with_its_own_reason_not_none_s(self):
+        # A device that sent something unparseable is a different fact from a
+        # device that sent nothing at all - smartctl DID run here, the manager
+        # just could not parse what came back, so "smartctl could not read
+        # this device" (the None/'' reason) would misattribute the failure.
+        got = collector.parse_smart({'/dev/sda': 'not json'})
+        disk = got['disks']['/dev/sda']
+        self.assertEqual('UNKNOWN', disk['verdict'])
+        self.assertNotEqual(smart.verdict(None)['reasons'], disk['reasons'])
+
     def test_an_empty_string_reads_the_same_as_none(self):
         # smartctl's exit status is a bitmask: a healthy read of a disk with
         # prefail attributes set exits non-zero, and the agent still sends the

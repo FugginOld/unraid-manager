@@ -317,6 +317,30 @@ try {
     v.unmount()
   }
 
+  /* ── rowKey's node_id prefix (carried item 1) ───────────────────────────
+     Every real node has an sda. Dropping the node_id prefix from rowKey()
+     makes `expanded` key on the device alone, so expanding ONE node's
+     /dev/sda would expand every OTHER node's /dev/sda at the same time -
+     the "click one, everything with a matching device name opens" defect. */
+  {
+    const RAVEN_SDA = disk({ node: 'Raven', node_id: 'n1', device: '/dev/sda',
+                             verdict: 'WATCH', reasons: ['raven sda unique reason'] })
+    const GOLEM_SDA = disk({ node: 'Golem', node_id: 'n2', device: '/dev/sda',
+                             verdict: 'WATCH', reasons: ['golem sda unique reason'] })
+    const v = await mount(Disks, { data: { disks: [RAVEN_SDA, GOLEM_SDA], spares: [], stale: [] } })
+    check('both nodes list their own /dev/sda before anything is clicked',
+          v.rows().length === 2)
+    // Found by content, not by position: the view's default sort is by node
+    // name, so which row lands first is not this check's business.
+    const ravenRow = v.rows().find(tr => tr.textContent.includes('Raven'))
+    await v.click(ravenRow)
+    check('expanding one node’s /dev/sda reveals only that node’s reason',
+          v.text().includes('raven sda unique reason'))
+    check('...and the other node’s same-named device stays collapsed',
+          !v.text().includes('golem sda unique reason'))
+    v.unmount()
+  }
+
   /* ── Drift's collapse, and the um-warn limit views.mjs writes down ───── */
   {
     const NODES = [{ id: 'n1', name: 'Raven' }, { id: 'n2', name: 'Golem' },

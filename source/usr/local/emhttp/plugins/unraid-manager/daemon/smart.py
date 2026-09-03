@@ -178,9 +178,13 @@ def _advisories(summary):
     nothing. The age of a test is a fact about monitoring hygiene, not about
     the drive. A self-test FAILURE is a different thing and does set FAIL.
 
-    The five "not reported" lines are the absent-versus-zero invariant made
-    visible: the operator is told which questions the drive declined to answer,
-    rather than being shown a clean number the drive never gave.
+    The "not reported" lines are the absent-versus-zero invariant made
+    visible: the operator is told which questions the drive declined to
+    answer, rather than being shown a clean number the drive never gave.
+    Seven possible strings across five categories - error counters split into
+    three mutually exclusive variants (both absent, only uncorrected absent,
+    only rereads absent) depending on which of the two structures the drive
+    reported, so at most one of the three ever fires alongside the other four.
     """
     out = []
     hours, tested = summary['power_on_hours'], summary['self_test_hours']
@@ -237,5 +241,9 @@ def verdict(doc):
     fails = _fail_reasons(summary)
     watches = _watch_reasons(summary)
     state = 'FAIL' if fails else ('WATCH' if watches else 'OK')
-    # reasons[0] is always the deciding one, and nothing notable is discarded.
+    # reasons[0] is the deciding one for FAIL and WATCH, where fails/watches is
+    # non-empty and sorts first. It is NOT true for OK: fails and watches are
+    # both empty there, so reasons[0] (if there is one at all) is just the
+    # first advisory - sda's is the self-test-age note - not evidence for
+    # anything. Nothing notable is discarded either way.
     return _result(state, fails + watches + _advisories(summary), summary)

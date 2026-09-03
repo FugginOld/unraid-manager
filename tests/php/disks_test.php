@@ -57,11 +57,16 @@ $array = json_encode(['state' => 'STARTED',
 /* parse_smart's shape after the verdict chain: the verdict, its reasons and a
    small summary per device. Keyed by the full device path, exactly as the
    agent reports it - um_device_key() reduces it to the same basename the
-   other two payloads join on. */
-$smart = json_encode(['count' => 2, 'disks' => [
+   other two payloads join on. /dev/sdd has no physical disk behind it (it is
+   Golem's orphaned array slot) - a drive that fell off the bus AFTER the last
+   smart poll is the realistic case, and that poll's verdict is exactly what
+   an orphan row's smart_fetched_at exists to date. */
+$smart = json_encode(['count' => 3, 'disks' => [
     '/dev/sdc' => ['verdict' => 'WATCH',
                    'reasons' => ['grown defects: 4', 'last self-test 21316 h ago'],
                    'summary' => ['model' => 'ST10000NM0226', 'power_on_hours' => 55161]],
+    '/dev/sdd' => ['verdict' => 'FAIL', 'reasons' => ['device not found'],
+                   'summary' => ['model' => null, 'power_on_hours' => null]],
     '/dev/sdz' => ['verdict' => 'OK', 'reasons' => [],
                    'summary' => ['model' => 'MG07SCA14TE', 'power_on_hours' => 100]]]]);
 $db->exec("INSERT INTO node_state VALUES('a1b2','smart','ok',NULL,'2026-09-01T02:00:00Z','"
@@ -177,6 +182,32 @@ check('the smart reading keeps its own timestamp',
       $golem['smart_fetched_at'] === '2026-09-01T02:00:00Z'
       && $golem['fetched_at'] !== $golem['smart_fetched_at']);
 
+/* The exact failure this file's header comment memorialises: a join that
+   matched 0 of 72 disks on real hardware while a fixture kept it green. A
+   spare's smart lookup is a second join on the same um_device_key(), and it
+   is just as easy to break silently - joining on the raw device path instead
+   of the reduced key, hardcoding the verdict null, or stamping it with the
+   disks clock instead of the smart one all produce a plausible-looking spare
+   row with no test noticing. */
+$golemSpare = array_values(array_filter($out['spares'], fn($s) => $s['node'] === 'Golem'))[0];
+check('a spare is joined to its node\'s smart verdict', $golemSpare['verdict'] === 'OK');
+check('a spare is marked with its node\'s smart tier', $golemSpare['smart_tier'] === 1);
+check('a spare\'s smart reading keeps its own timestamp',
+      $golemSpare['smart_fetched_at'] === '2026-09-01T02:00:00Z');
+
+/* The orphan row's smart lookup is pinned the same way: /dev/sdd (Golem's
+   fallen-off-the-bus slot) has its own entry in the smart payload above, so a
+   hardcoded null here - the failure mode a device simply absent from the map
+   would not catch - is caught too. The orphan's own fetched_at is the ARRAY
+   clock (a fast domain); smart_fetched_at must stay the SMART domain's clock
+   and the two must differ, the same discipline as the disks/array split. */
+$golemOrphan = $byDevice['Golem:sdd'];
+check('an orphan is joined to its node\'s smart verdict', $golemOrphan['verdict'] === 'FAIL');
+check('an orphan is marked with its node\'s smart tier', $golemOrphan['smart_tier'] === 1);
+check('an orphan\'s smart reading keeps its own timestamp, distinct from the array clock',
+      $golemOrphan['smart_fetched_at'] === '2026-09-01T02:00:00Z'
+      && $golemOrphan['smart_fetched_at'] !== $golemOrphan['fetched_at']);
+
 $raven = $byDevice['Raven:/dev/sdc'] ?? null;
 check('a tier 0 disk is marked tier 0', $raven !== null && $raven['smart_tier'] === 0);
 check('a tier 0 disk has no verdict', $raven !== null && $raven['verdict'] === null);
@@ -209,9 +240,15 @@ check('every stale entry names its domain',
    a 'smart' row written by the PREVIOUS build can still hold the raw smartctl
    document shape until the slow lane repolls - including a bare null for a
    device that could not be read. That old shape has no 'verdict' key at all;
-   it must read as "no verdict for this disk", not warn or fatal. */
+   it must read as "no verdict for this disk", not warn or fatal. This must
+   use the real pre-Task-3 envelope (a 'disks' map, not a bare device map) and
+   devices that actually match Ember's disks payload (/dev/sdc, spare
+   /dev/sdz) - anything else lets $verdicts stay empty and never reach the
+   'present but has no verdict key' code path at all. */
 $db->exec("INSERT INTO nodes VALUES('f6a7','Ember','1.2.3.9',1,1,1,'x','y','SENTINEL-KEY-NOT-FOR-EXPORT')");
-$rawSmart = json_encode(['/dev/sde' => null, '/dev/sdf' => ['temperature' => 30]]);
+$rawSmart = json_encode(['count' => 2, 'disks' => [
+    '/dev/sdc' => ['temperature' => ['current' => 30], 'smart_status' => ['passed' => true]],
+    '/dev/sdz' => null]]);
 $db->exec("INSERT INTO node_state VALUES('f6a7','disks','ok',NULL,'2026-09-01T01:00:00Z','"
           . SQLite3::escapeString($disks) . "')");
 $db->exec("INSERT INTO node_state VALUES('f6a7','smart','ok',NULL,'2026-09-01T02:00:00Z','"
@@ -221,6 +258,20 @@ $ember = null;
 foreach ($out['disks'] as $row) if ($row['node'] === 'Ember') { $ember = $row; break; }
 check('an old raw smart payload does not crash the join', $ember !== null);
 check('an old raw smart payload yields no verdict', $ember !== null && $ember['verdict'] === null);
+
+/* A tier 1 node whose agent has never reported smart AND whose Unraid API has
+   never reported disks either - a first-ever failure on both fronts. Before
+   the smart block was hoisted above the disks early-return, only the 'disks'
+   stale entry would surface; the 'smart' one was silently lost behind the
+   early continue. */
+$db->exec("INSERT INTO nodes VALUES('a7b8','Fen','1.2.3.10',1,1,1,'x','y','SENTINEL-KEY-NOT-FOR-EXPORT')");
+$out = um_fleet_disks($db);
+$fenStale = array_values(array_filter($out['stale'], fn($s) => $s['node'] === 'Fen'));
+$fenDomains = array_map(fn($s) => $s['domain'], $fenStale);
+check('a tier 1 node with no disks row at all still gets a disks stale entry',
+      in_array('disks', $fenDomains, true));
+check('a tier 1 node with no disks row at all ALSO gets a smart stale entry',
+      in_array('smart', $fenDomains, true));
 
 echo $fails === 0 ? "disks: all pass\n" : "disks: $fails FAILED\n";
 exit($fails === 0 ? 0 : 1);

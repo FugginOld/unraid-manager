@@ -44,6 +44,43 @@ function um_fleet_disks(?SQLite3 $db): array {
         $rows = $byNode[$node['id']] ?? [];
         $diskRow = $rows['disks'] ?? null;
 
+        /* The tier is READ from the registry, never inferred from whether a
+           payload happens to exist. A tier 1 node that has not been polled yet
+           has no smart row, and calling that tier 0 would tell the operator the
+           node cannot be assessed when it merely has not been.
+           This sits above the disks-payload early return below because it
+           depends on nothing but $node and $rows: a node whose agent has never
+           reported smart AND whose Unraid API has never reported disks (a
+           first-ever failure on both) still needs its own 'smart' stale entry,
+           not just the 'disks' one - hiding one behind the other is exactly the
+           silent loss this file's header doctrine rules out. */
+        $tier = (int) ($node['tier'] ?? 0);
+        $smartRow = $rows['smart'] ?? null;
+        $verdicts = [];
+        $smartPayload = json_decode((string) ($smartRow['payload'] ?? ''), true);
+        /* The smart payload adds a third naming convention to this join: like
+           the physical enumeration, the agent reports its own full path
+           ("/dev/sda"), not array.disks' bare kernel name. Running it through
+           the same um_device_key() as both other payloads keeps every payload
+           on one join key rather than assuming the paths always agree - the
+           same discipline the array join above exists to enforce. */
+        foreach ((is_array($smartPayload) ? $smartPayload['disks'] ?? [] : []) as $dev => $v) {
+            $k = um_device_key($dev);
+            // Legacy pre-Task-3 raw payloads store a bare null per device that
+            // could not be read; skip it rather than index into it below.
+            if ($k !== '' && is_array($v)) $verdicts[$k] = $v;
+        }
+        if ($tier >= 1 && $smartRow === null) {
+            $stale[] = ['node' => $node['name'], 'node_id' => $node['id'],
+                        'domain' => 'smart', 'status' => 'unknown',
+                        'error' => 'no SMART poll recorded yet', 'fetched_at' => null];
+        } elseif ($smartRow !== null && ($smartRow['status'] ?? '') !== 'ok') {
+            $stale[] = ['node' => $node['name'], 'node_id' => $node['id'],
+                        'domain' => 'smart', 'status' => $smartRow['status'],
+                        'error' => (string) $smartRow['error'],
+                        'fetched_at' => $smartRow['fetched_at']];
+        }
+
         if ($diskRow === null) {
             /* The slow lane has never run for this node at all - enrolled but
                not yet polled. Fail closed: an uncollected node is visibly
@@ -82,29 +119,6 @@ function um_fleet_disks(?SQLite3 $db): array {
         foreach ((is_array($arrayPayload) ? $arrayPayload['disks'] ?? [] : []) as $slot) {
             $k = um_device_key($slot['device'] ?? null);
             if ($k !== '') $slots[$k] = $slot;
-        }
-
-        /* The tier is READ from the registry, never inferred from whether a
-           payload happens to exist. A tier 1 node that has not been polled yet
-           has no smart row, and calling that tier 0 would tell the operator the
-           node cannot be assessed when it merely has not been. */
-        $tier = (int) ($node['tier'] ?? 0);
-        $smartRow = $rows['smart'] ?? null;
-        $verdicts = [];
-        $smartPayload = json_decode((string) ($smartRow['payload'] ?? ''), true);
-        foreach ((is_array($smartPayload) ? $smartPayload['disks'] ?? [] : []) as $dev => $v) {
-            $k = um_device_key($dev);
-            if ($k !== '' && is_array($v)) $verdicts[$k] = $v;
-        }
-        if ($tier === 1 && $smartRow === null) {
-            $stale[] = ['node' => $node['name'], 'node_id' => $node['id'],
-                        'domain' => 'smart', 'status' => 'unknown',
-                        'error' => 'no SMART poll recorded yet', 'fetched_at' => null];
-        } elseif ($smartRow !== null && ($smartRow['status'] ?? '') !== 'ok') {
-            $stale[] = ['node' => $node['name'], 'node_id' => $node['id'],
-                        'domain' => 'smart', 'status' => $smartRow['status'],
-                        'error' => (string) $smartRow['error'],
-                        'fetched_at' => $smartRow['fetched_at']];
         }
 
         $usedSlots = [];

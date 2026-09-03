@@ -1065,8 +1065,13 @@ Add these checks:
   const html = await renderView(Disks, { disks: [], spares: [], stale: [
     { node: 'Golem', node_id: 'n2', domain: 'smart', status: 'error',
       error: 'ssh exited 255', fetched_at: '2026-09-01T02:00:00Z' }] })
-  check('a smart staleness says SMART, not disk list',
-        html.includes('SMART') && !html.includes('no disk list yet'))
+  // Assert the two SENTENCES against each other. An earlier draft of this
+  // check tested html.includes('SMART'), which is true of every render of
+  // this view - the table header is <th>SMART</th> and a filter button reads
+  // "Any SMART". It passed with `v-if="false"` on the domain split, i.e. with
+  // the entire deliverable deleted.
+  check('a smart staleness says SMART assessment, not disk list',
+        html.includes('SMART assessment') && !html.includes('disk list'))
 }
 ```
 
@@ -1231,9 +1236,17 @@ node tests/js/interact.mjs
 ```
 Expected: `views: all pass`, `interact: all pass`.
 
-- [ ] **Step 5: Rebuild the bundle**
+- [ ] **Step 5: Rebuild the bundle — but do NOT commit it**
 
-The plugin ships a built bundle under `source/.../ui/assets/`. Run the repo's build (`bash build.sh` or the npm build it wraps — read `build.sh` first) and commit the rebuilt asset alongside the source change, or the pane on the box will not show any of this.
+Run `cd frontend && npm run build` (read `build.sh` first for what the packaging
+step actually does) to confirm the template compiles under the real
+`@vitejs/plugin-vue`. The SSR test harness uses a mock compiler and cannot see a
+template error that the real one rejects.
+
+**`source/.../ui/` is gitignored and has never been tracked.** `build.sh` builds
+the pane at packaging time on purpose, "so what ships is what the reviewed source
+produces" rather than a stale `ui/` lying around. Do not commit the built asset —
+an earlier draft of this plan said to, and it was wrong.
 
 - [ ] **Step 6: Run both full suites**
 

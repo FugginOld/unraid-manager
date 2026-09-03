@@ -104,10 +104,15 @@ async function mount (component, fixture) {
   }
 }
 
+// Tier 1 by default, with a real verdict: this is the fixture the filter
+// tests exercise, and a verdict filter can only be proven against a row that
+// HAS one. The one tier-0 row this fleet still needs (TIER0, below) overrides
+// both fields back down.
 const DISK = {
   node: 'Raven', node_id: 'n1', model: 'ST10000NM0226', device: '/dev/sda',
   vendor: 'Seagate', size: 10000831348736, temp: 34, smart_status: 'OK',
   interface: 'SATA', slot: 'disk1', errors: 0, array_status: 'DISK_OK',
+  verdict: 'OK', reasons: [], smart_tier: 1, smart_fetched_at: '2026-08-28T00:00:00Z',
   fetched_at: '2026-08-28T00:00:00Z',
 }
 const disk = (over) => ({ ...DISK, ...over })
@@ -119,8 +124,19 @@ const disk = (over) => ({ ...DISK, ...over })
    clicks rather than through sort.js directly. */
 const HOT = disk({ device: '/dev/sda', slot: 'disk1', temp: 44 })
 const WARM = disk({ device: '/dev/sdb', slot: 'disk4', temp: 31 })
-const COLD = disk({ device: '/dev/sdc', slot: 'disk2', temp: null, smart_status: 'UNKNOWN' })
+const COLD = disk({ device: '/dev/sdc', slot: 'disk2', temp: null,
+                    smart_status: 'UNKNOWN', verdict: 'UNKNOWN' })
 const GOLEM = disk({ node: 'Golem', node_id: 'n2', device: '/dev/sdd', slot: 'disk3', temp: 38 })
+/* The one tier-0 row: cannot carry a verdict at all, which is the fact its own
+   check below exists to pin - the LIMITED bucket needs a real row to select. */
+const TIER0 = disk({ node: 'Raven', node_id: 'n1', device: '/dev/sdt', slot: 'disk8',
+                      verdict: null, smart_tier: 0 })
+/* Golem runs the agent, so its rows carry a real assessment (Task 5). */
+const ASSESSED = disk({
+  node: 'Golem', node_id: 'n2', device: '/dev/sdc',
+  verdict: 'WATCH', reasons: ['grown defects: 4', 'last self-test 21316 h ago'],
+  smart_tier: 1, smart_fetched_at: '2026-09-01T02:00:00Z',
+})
 /* An array slot with nothing behind it: model null, which smartOf() reports as
    "no disk" and the fourth filter button offers under that same name. */
 const ORPHAN = disk({
@@ -223,6 +239,38 @@ try {
     check('a filter pair that matches nothing says so instead of going blank',
           v.rows().length === 0 && v.text().includes('No disks reported yet.'))
 
+    v.unmount()
+  }
+
+  /* ── the tier-0 filter (Task 5) ──────────────────────────────────────────
+     Its own mount, not folded into FLEET above: FLEET's row count and sort
+     order are already pinned by name (5 disks, Golem first) in the blocks
+     above, and adding a row here would silently retarget every one of them. */
+  {
+    const v = await mount(Disks, { data: { disks: [GOLEM, TIER0], spares: [], stale: [] } })
+
+    await v.click(v.byText('button', 'Tier 0 only'))
+    check('the Tier 0 filter selects the tier-0 row and nothing else',
+          v.rows().length === 1 && v.cells(v.rows()[0])[DEVICE_COL] === '/dev/sdt')
+
+    await v.click(v.byText('button', 'Tier 0 only'))
+    await v.click(v.byText('button', 'OK'))
+    check('the OK filter does not also pick up the tier-0 row',
+          v.rows().length === 1 && v.cells(v.rows()[0])[DEVICE_COL] === '/dev/sdd')
+
+    v.unmount()
+  }
+
+  /* ── the verdict row's expand (Task 5) ───────────────────────────────── */
+  {
+    /* An unexplained WATCH sends the operator to a shell with smartctl, which
+       defeats the pane. The reason has to be reachable without leaving it. */
+    const v = await mount(Disks, { data: { disks: [ASSESSED], spares: [], stale: [] } })
+    check('reasons are hidden until asked for', !v.text().includes('grown defects: 4'))
+    await v.click(v.host.querySelector('tbody tr'))
+    check('clicking a row reveals its reasons', v.text().includes('grown defects: 4'))
+    await v.click(v.host.querySelector('tbody tr'))
+    check('clicking again hides them', !v.text().includes('grown defects: 4'))
     v.unmount()
   }
 

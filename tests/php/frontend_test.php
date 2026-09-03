@@ -413,9 +413,15 @@ check('the table is sortable', str_contains($disks, 'sortBy'));
 check('rows filter by node', str_contains($disks, 'nodeFilter'));
 check('rows filter by smart status', str_contains($disks, 'smartFilter'));
 check('smart status is shown verbatim', str_contains($disks, 'smart_status'));
-/* Tier 0 gives OK|UNKNOWN and nothing else. Deriving a health verdict from
-   two values would be inventing the one number this screen cannot know. */
-check('no verdict is invented from OK|UNKNOWN', !str_contains($disks, 'verdict'));
+/* Tier 0 gives OK|UNKNOWN and nothing else, so its cell must still show
+   smart_status verbatim rather than a value synthesised to look like one of
+   the real (Tier 1) verdicts. Task 5 gave this screen a real `verdict` field
+   off the endpoint, so the invariant worth pinning changed from "the word
+   verdict never appears" to "a WATCH/FAIL reading is never manufactured from
+   smart_status" - the one number a Tier 0 disk still cannot know. */
+check('a verdict is never derived from smart_status - it comes from the endpoint field',
+      str_contains($disks, 'disk.verdict')
+      && !preg_match('/smart_status[\s\S]{0,40}(WATCH|FAIL)/', $disks));
 check('a node whose disk payload is not current is labelled', str_contains($disks, 'stale'));
 check('spares are listed', str_contains($disks, 'spares'));
 check('the tier 0 smart limit is stated to the operator', str_contains($disks, 'Tier 1'));
@@ -439,9 +445,13 @@ check('no row reads a `name` field disks.php never emits',
 /* Anchored on disk., not on node_id/device alone: the spares table's own
    :key satisfied the loose version, so keying the disk rows on the model -
    which repeats across identical drives and is null on every orphan - passed
-   (mutation M7). */
+   (mutation M7). Task 5 moved the key onto the wrapping <template v-for> (the
+   row now has a sibling reasons row, and two <tr> cannot share one v-for) and
+   through a named rowKey() - the check now follows the key to that function's
+   own body rather than expecting the node_id/device pair written out inline. */
 check('disk rows key on the node and the device, not on the repeating model',
-      (bool) preg_match('/:key="disk\.node_id[^"]*disk\.device"/', $disksTemplate));
+      (bool) preg_match('/function rowKey[\s\S]{0,60}disk\.node_id[\s\S]{0,20}disk\.device/', $disks)
+      && str_contains($disksTemplate, ':key="rowKey(disk)"'));
 
 /* Controller amendment B: an array slot with no physical disk behind it is a
    drive that fell off the bus - the single most important row this screen can

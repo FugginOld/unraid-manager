@@ -36,15 +36,45 @@ function bytes (n) {
 function dash (v) { return v === null || v === undefined ? '—' : v }
 
 // Controller amendment B: model === null is an array slot with no physical
-// disk behind it - a drive that fell off the bus. It has no SMART status
-// because there is nothing to ask, which is not the same as a disk that
-// answered UNKNOWN. One spelling, used by both the cell and the filter button:
-// with the literal repeated in the template, changing this function left the
-// "No disk" filter selecting nothing and the whole suite green.
+// disk behind it. It has no SMART status because there is nothing to ask,
+// which is not the same as a disk that answered UNKNOWN. One spelling, used by
+// both the cell and the filter button: with the literal repeated in the
+// template, changing this function left the "No disk" filter selecting nothing
+// and the whole suite green.
 const NO_DISK = 'no disk'
-function smartOf (disk) {
+const LIMITED = 'limited'
+const NOT_YET = 'not assessed yet'
+
+// The key the filters compare, so display text and filter value can never
+// drift apart the way they did once already.
+function verdictKey (disk) {
   if (disk.model === null) return NO_DISK
-  return disk.smart_status || 'UNKNOWN'
+  if (disk.smart_tier !== 1) return LIMITED
+  return disk.verdict || NOT_YET
+}
+
+// What the cell shows. A tier 0 node reports Unraid's OK|UNKNOWN and nothing
+// behind it; the suffix exists so a tier 0 OK can never be read as an assessed
+// one. A tier 1 row with no verdict yet gets a dash instead - that node CAN be
+// assessed and simply has not been, and rendering the two alike would be the
+// same absent-versus-unable defect this pane keeps closing.
+function verdictText (disk) {
+  const key = verdictKey(disk)
+  if (key === LIMITED) return `${disk.smart_status || 'UNKNOWN'} (limited)`
+  if (key === NOT_YET) return '—'
+  return key
+}
+
+const VERDICT_CLASS = { OK: 'um-ok', WATCH: 'um-watch', FAIL: 'um-crit' }
+function verdictClass (disk) {
+  return VERDICT_CLASS[verdictKey(disk)] || 'um-unknown'
+}
+
+const expanded = ref(null)
+function rowKey (disk) { return disk.node_id + ':' + disk.device }
+function toggle (disk) {
+  const key = rowKey(disk)
+  expanded.value = expanded.value === key ? null : key
 }
 
 function sortBy (key) {
@@ -55,13 +85,16 @@ function sortBy (key) {
 const rows = computed(() => {
   const all = (data.value?.disks ?? [])
     .filter(d => !nodeFilter.value || d.node === nodeFilter.value)
-    .filter(d => !smartFilter.value || smartOf(d) === smartFilter.value)
+    .filter(d => !smartFilter.value || verdictKey(d) === smartFilter.value)
   // sort.js, not an inline comparator: a disk with no temperature used to
   // sort as if it were 0 C and lead an ascending sort, reading as the coldest
   // drive in the fleet (P1 triage P2-7). Pinned twice - as a function in
   // views.mjs, and through the header click in interact.mjs.
   return sortRows(all, sortKey.value, sortAsc.value)
 })
+
+const anyTier0 = computed(() =>
+  (data.value?.disks ?? []).some(d => d.smart_tier !== 1))
 
 const nodes = computed(() => [...new Set((data.value?.disks ?? []).map(d => d.node))])
 const stale = computed(() => data.value?.stale ?? [])
@@ -82,8 +115,10 @@ const spares = computed(() => data.value?.spares ?? [])
          (Task 13, item 7). -->
     <template v-if="data && !dbUnreadable">
       <!-- The operator should never have to wonder why there is no verdict
-           column. Unraid reports OK|UNKNOWN and nothing else at Tier 0. -->
-      <p class="um-hint">
+           column. Unraid reports OK|UNKNOWN and nothing else at Tier 0 - and
+           gated on there still being one, so a fully Tier 1 fleet stops seeing
+           a limit that no longer applies to it. -->
+      <p v-if="anyTier0" class="um-hint">
         Unraid's API reports SMART health as OK or UNKNOWN only. Full SMART
         attributes, and the disk assessment they support, need a Tier 1 agent
         on each node.
@@ -92,17 +127,34 @@ const spares = computed(() => data.value?.spares ?? [])
       <!-- Controller amendment C: two different facts, so two different
            sentences. fetched_at is null only for a node that has never been
            polled - on a freshly enrolled fleet that is EVERY node for up to
-           ten minutes, which is expected and must not read as a failure. -->
-      <p v-for="entry in stale" :key="entry.node_id" class="um-node-stale">
-        <template v-if="entry.fetched_at">
-          {{ entry.node }}: showing the disk list collected
-          {{ localTime(entry.fetched_at, tz, clock12) }} — the latest poll did not complete
-          ({{ entry.error }}).
+           ten minutes, which is expected and must not read as a failure. Split
+           by domain too: a SMART call failing on a node whose disk list is
+           fine is not "no disk list yet". -->
+      <p v-for="entry in stale" :key="entry.node_id + ':' + entry.domain"
+         class="um-node-stale">
+        <template v-if="entry.domain === 'smart'">
+          <template v-if="entry.fetched_at">
+            {{ entry.node }}: showing the SMART assessment collected
+            {{ localTime(entry.fetched_at, tz, clock12) }} — the latest agent call
+            did not complete ({{ entry.error }}).
+          </template>
+          <template v-else>
+            {{ entry.node }}: no SMART assessment yet — this node runs the agent
+            but has not been polled for SMART. The inventory poll is slow; give
+            it ten minutes.
+          </template>
         </template>
         <template v-else>
-          {{ entry.node }}: no disk list yet — this node has not been polled
-          since it was enrolled. The inventory poll is slow; give it ten
-          minutes.
+          <template v-if="entry.fetched_at">
+            {{ entry.node }}: showing the disk list collected
+            {{ localTime(entry.fetched_at, tz, clock12) }} — the latest poll did not complete
+            ({{ entry.error }}).
+          </template>
+          <template v-else>
+            {{ entry.node }}: no disk list yet — this node has not been polled
+            since it was enrolled. The inventory poll is slow; give it ten
+            minutes.
+          </template>
         </template>
       </p>
 
@@ -115,7 +167,10 @@ const spares = computed(() => data.value?.spares ?? [])
       <p>
         <button type="button" @click="smartFilter = ''">Any SMART</button>
         <button type="button" @click="smartFilter = 'OK'">OK</button>
+        <button type="button" @click="smartFilter = 'WATCH'">WATCH</button>
+        <button type="button" @click="smartFilter = 'FAIL'">FAIL</button>
         <button type="button" @click="smartFilter = 'UNKNOWN'">UNKNOWN</button>
+        <button type="button" @click="smartFilter = LIMITED">Tier 0 only</button>
         <button type="button" @click="smartFilter = NO_DISK">No disk</button>
       </p>
 
@@ -136,29 +191,39 @@ const spares = computed(() => data.value?.spares ?? [])
         </thead>
         <tbody>
           <tr v-if="!rows.length"><td colspan="10">No disks reported yet.</td></tr>
-          <!-- device is unique per node and present on every row; model
-               repeats across identical drives and is null on the orphans
-               (controller amendment A). -->
-          <tr v-for="disk in rows" :key="disk.node_id + ':' + disk.device">
-            <td>{{ disk.node }}</td>
-            <td>{{ dash(disk.slot) }}</td>
-            <!-- A word, not only a colour: the array claims this slot and no
-                 physical disk answered for it. -->
-            <td v-if="disk.model === null" class="um-warn">no disk present</td>
-            <td v-else>{{ disk.model }}</td>
-            <td>{{ dash(disk.device) }}</td>
-            <td>{{ dash(disk.vendor) }}</td>
-            <td>{{ bytes(disk.size) }}</td>
-            <td>{{ dash(disk.temp) }}</td>
-            <td>{{ dash(disk.array_status) }}</td>
-            <td :class="{ 'um-warn': disk.errors > 0,
-                          'um-unknown': disk.errors === null || disk.errors === undefined }">
-              {{ dash(disk.errors) }}
-            </td>
-            <td :class="smartOf(disk) === 'OK' ? 'um-ok' : 'um-unknown'">
-              {{ smartOf(disk) }}
-            </td>
-          </tr>
+          <!-- Two <tr> per disk (the row plus its collapsible reasons row)
+               can't both carry the same v-for, so the pair is wrapped in a
+               <template v-for> - the standard Vue 3 form for a row plus a
+               detail row. device is unique per node and present on every row;
+               model repeats across identical drives and is null on the
+               orphans (controller amendment A). -->
+          <template v-for="disk in rows" :key="rowKey(disk)">
+            <tr @click="toggle(disk)">
+              <td>{{ disk.node }}</td>
+              <td>{{ dash(disk.slot) }}</td>
+              <!-- A word, not only a colour: the array claims this slot and no
+                   physical disk answered for it. -->
+              <td v-if="disk.model === null" class="um-warn">no disk present</td>
+              <td v-else>{{ disk.model }}</td>
+              <td>{{ dash(disk.device) }}</td>
+              <td>{{ dash(disk.vendor) }}</td>
+              <td>{{ bytes(disk.size) }}</td>
+              <td>{{ dash(disk.temp) }}</td>
+              <td>{{ dash(disk.array_status) }}</td>
+              <td :class="{ 'um-warn': disk.errors > 0,
+                            'um-unknown': disk.errors === null || disk.errors === undefined }">
+                {{ dash(disk.errors) }}
+              </td>
+              <td :class="verdictClass(disk)">{{ verdictText(disk) }}</td>
+            </tr>
+            <!-- The reason strings can carry a controller-supplied value (a
+                 self-test result off the drive's own firmware), so this is
+                 always plain {{ }} interpolation - never v-html. -->
+            <tr v-if="expanded === rowKey(disk) && disk.reasons.length"
+                :key="rowKey(disk) + ':why'">
+              <td colspan="10">{{ disk.reasons.join(' · ') }}</td>
+            </tr>
+          </template>
         </tbody>
       </table>
 

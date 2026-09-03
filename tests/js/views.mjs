@@ -36,6 +36,7 @@ const DISK = {
   node: 'Raven', node_id: 'n1', model: 'ST10000NM0226', device: '/dev/sda',
   vendor: 'Seagate', size: 10000831348736, temp: 34, smart_status: 'OK',
   interface: 'SATA', slot: 'disk1', errors: 0, array_status: 'DISK_OK',
+  verdict: null, reasons: [], smart_tier: 0, smart_fetched_at: null,
   fetched_at: '2026-08-28T00:00:00Z',
 }
 /* Exactly the shape disks.php emits for an array slot with nothing behind it
@@ -44,7 +45,19 @@ const ORPHAN = {
   node: 'Raven', node_id: 'n1', model: null, device: 'sdj',
   vendor: null, size: null, temp: null, smart_status: null, interface: null,
   slot: 'disk7', errors: 12, array_status: 'DISK_DSBL',
+  verdict: null, reasons: [], smart_tier: 0, smart_fetched_at: null,
   fetched_at: '2026-08-28T00:00:00Z',
+}
+/* Golem runs the agent, so its rows carry a real assessment. */
+export const ASSESSED = {
+  ...DISK, node: 'Golem', node_id: 'n2', device: '/dev/sdc',
+  verdict: 'WATCH', reasons: ['grown defects: 4', 'last self-test 21316 h ago'],
+  smart_tier: 1, smart_fetched_at: '2026-09-01T02:00:00Z',
+}
+/* Tier 1, enrolled, not yet polled. NOT the same as tier 0. */
+export const UNPOLLED = {
+  ...DISK, node: 'Cedar', node_id: 'n3', device: '/dev/sdd',
+  verdict: null, reasons: [], smart_tier: 1,
 }
 
 try {
@@ -173,6 +186,37 @@ try {
         htmlFailedPoll.includes('2026-08-27, 09:00:00 UTC'))
   check('both stale entries name the node they are about',
         htmlNeverPolled.includes('Golem') && htmlFailedPoll.includes('Golem'))
+
+  /* ── the verdict column (Task 5) ─────────────────────────────────────── */
+  {
+    const html = await renderView(Disks, { data: { disks: [ASSESSED], spares: [], stale: [] } })
+    check('an assessed disk shows its verdict', html.includes('WATCH'))
+    check('a WATCH verdict is styled as a watch', html.includes('um-watch'))
+    check('an assessed disk is not labelled limited', !html.includes('(limited)'))
+  }
+  {
+    /* A tier 0 OK must never read as an assessed OK. Unraid's API reports
+       OK|UNKNOWN and nothing behind it. */
+    const html = await renderView(Disks, { data: { disks: [DISK], spares: [], stale: [] } })
+    check('a tier 0 disk is labelled limited', html.includes('OK (limited)'))
+  }
+  {
+    /* Tier 1 with nothing collected yet renders a dash, NOT "(limited)": the
+       node is capable of an assessment and has not produced one. Rendering
+       these two the same way is the absent-versus-unable defect on screen. */
+    const html = await renderView(Disks, { data: { disks: [UNPOLLED], spares: [], stale: [] } })
+    check('an unpolled tier 1 disk is not labelled limited', !html.includes('(limited)'))
+  }
+  {
+    /* The stale copy is per-domain. Today's sentence - "no disk list yet, this
+       node has not been polled since it was enrolled" - is simply false for a
+       node whose disk list is fine and whose SMART call failed. */
+    const html = await renderView(Disks, { data: { disks: [], spares: [], stale: [
+      { node: 'Golem', node_id: 'n2', domain: 'smart', status: 'error',
+        error: 'ssh exited 255', fetched_at: '2026-09-01T02:00:00Z' }] } })
+    check('a smart staleness says SMART, not disk list',
+          html.includes('SMART') && !html.includes('no disk list yet'))
+  }
 
   /* ── never a blank pane, never a second wrong claim (Task 13 items 6, 7) ── */
   const htmlDown = await renderView(Disks, { data: null, error: 'disks.php: HTTP 502', loading: false })

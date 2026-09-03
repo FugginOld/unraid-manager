@@ -67,7 +67,7 @@ $smart = json_encode(['count' => 3, 'disks' => [
                    'summary' => ['model' => 'ST10000NM0226', 'power_on_hours' => 55161]],
     '/dev/sdd' => ['verdict' => 'FAIL', 'reasons' => ['device not found'],
                    'summary' => ['model' => null, 'power_on_hours' => null]],
-    '/dev/sdz' => ['verdict' => 'OK', 'reasons' => [],
+    '/dev/sdz' => ['verdict' => 'OK', 'reasons' => ['grown defect count not reported'],
                    'summary' => ['model' => 'MG07SCA14TE', 'power_on_hours' => 100]]]]);
 $db->exec("INSERT INTO node_state VALUES('a1b2','smart','ok',NULL,'2026-09-01T02:00:00Z','"
           . SQLite3::escapeString($smart) . "')");
@@ -194,6 +194,8 @@ check('a spare is joined to its node\'s smart verdict', $golemSpare['verdict'] =
 check('a spare is marked with its node\'s smart tier', $golemSpare['smart_tier'] === 1);
 check('a spare\'s smart reading keeps its own timestamp',
       $golemSpare['smart_fetched_at'] === '2026-09-01T02:00:00Z');
+check('a spare carries the reasons behind its verdict',
+      $golemSpare['reasons'][0] === 'grown defect count not reported');
 
 /* The orphan row's smart lookup is pinned the same way: /dev/sdd (Golem's
    fallen-off-the-bus slot) has its own entry in the smart payload above, so a
@@ -234,7 +236,8 @@ $cedarStale = array_values(array_filter($out['stale'],
     fn($s) => $s['node'] === 'Cedar' && $s['domain'] === 'smart'));
 check('an unpolled tier 1 node is listed as stale for smart',
       count($cedarStale) === 1
-      && $cedarStale[0]['error'] === 'no SMART poll recorded yet');
+      && $cedarStale[0]['error'] === 'no SMART poll recorded yet'
+      && $cedarStale[0]['status'] === 'unknown');
 check('every stale entry names its domain',
       count(array_filter($out['stale'], fn($s) => !isset($s['domain']))) === 0);
 

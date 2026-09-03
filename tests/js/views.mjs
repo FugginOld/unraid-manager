@@ -60,8 +60,10 @@ export const UNPOLLED = {
   verdict: null, reasons: [], smart_tier: 1,
 }
 /* Fix round 1, non-blocking 1: the highest-stakes cell this pane renders had
-   no fixture at all - both OK -> um-ok and FAIL -> um-crit survived mutation
-   with nothing here to notice a wrong class either way. */
+   no FAIL fixture at all - FAIL -> um-crit survived mutation with nothing
+   here to notice a wrong class. (OK -> um-ok is pinned separately below -
+   this fixture alone does not cover it, despite what an earlier version of
+   this comment claimed.) */
 const FAILED = {
   ...DISK, node: 'Golem', node_id: 'n2', device: '/dev/sde',
   verdict: 'FAIL', reasons: ['reallocated sectors: 200'],
@@ -221,6 +223,15 @@ try {
     check('a FAIL verdict is styled as critical', html.includes('um-crit'))
   }
   {
+    /* Fix round 2, cheap gap 2: OK -> um-ok was entirely unpinned - remapping
+       it to um-crit or um-watch in VERDICT_CLASS survived every check in this
+       suite. ASSESSED/FAILED only ever exercised WATCH and FAIL. */
+    const html = await renderView(Disks, {
+      data: { disks: [{ ...ASSESSED, verdict: 'OK' }], spares: [], stale: [] },
+    })
+    check('an OK verdict is styled as ok', html.includes('um-ok'))
+  }
+  {
     /* Fix round 1, non-blocking 4: a tier 1 disk with no verdict yet but a
        Tier-0-shaped smart_status of 'FAIL' must still read as not-assessed -
        the verdict comes only from the endpoint's own `verdict` field, never
@@ -268,6 +279,18 @@ try {
       status: 'unknown', error: 'no smart poll recorded yet', fetched_at: null })
     check('a smart staleness never polled also says SMART, not disk list',
           smartNeverPolled.includes('SMART assessment') && !smartNeverPolled.includes('disk list'))
+    /* Fix round 2, cheap gap 1: the disks branch already had checks pinning
+       fetched_at as the thing that tells its two sentences apart; the newer
+       smart branch did not, and both "SMART assessment" checks above pass
+       whichever way entry.fetched_at's v-if is flipped, since both smart
+       sentences contain that phrase and neither contains "disk list". A
+       freshly enrolled Tier 1 node reaching this branch with no fetched_at
+       must not read as a failed call - controller amendment C's defect,
+       reappearing on the newer domain if this regresses. */
+    check('a smart staleness with a prior reading names the call that failed',
+          smartFailed.includes('did not complete'))
+    check('a smart staleness never polled does not claim a call failed',
+          !smartNeverPolled.includes('did not complete'))
 
     const disksFailed = await staleOf({ node: 'Golem', node_id: 'n2', domain: 'disks',
       status: 'error', error: 'HTTP 504 from 10.0.0.9', fetched_at: '2026-08-27T09:00:00Z' })

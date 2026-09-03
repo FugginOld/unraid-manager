@@ -266,22 +266,35 @@ try {
      putting WATCH last, which is exactly backwards for a triage column. This
      fleet has one of each of the four real verdicts, so severity order
      (FAIL, WATCH, UNKNOWN, OK) and alphabetical order disagree on every
-     position; only the severity order can pass this check. */
+     position; only the severity order can pass this check. TIER0 (defined
+     above, for the filter test) has no verdict at all - it is folded in here
+     too, so the unranked bucket has a real row to prove last-in-both-
+     directions against.
+     Fix round 2, blocking: the first cut of verdictRank returned a numeric
+     sentinel for the unranked bucket, which compareValues then multiplied by
+     the sort direction like any other number - flipping it to LEAD the
+     descending sort instead of trailing it, same trap as a temp-less disk
+     sorting as the coldest drive. TIER0 must be last whichever way the arrow
+     points, which a sentinel number cannot give it on both clicks. */
   {
     const FAILED = disk({ node: 'Raven', node_id: 'n1', device: '/dev/sdf', verdict: 'FAIL' })
     const WATCHED = disk({ node: 'Raven', node_id: 'n1', device: '/dev/sdg', verdict: 'WATCH' })
     const UNKNOWND = disk({ node: 'Raven', node_id: 'n1', device: '/dev/sdh', verdict: 'UNKNOWN' })
     const OKD = disk({ node: 'Raven', node_id: 'n1', device: '/dev/sdi', verdict: 'OK' })
-    const v = await mount(Disks, { data: { disks: [OKD, UNKNOWND, WATCHED, FAILED], spares: [], stale: [] } })
+    const v = await mount(Disks, { data: { disks: [OKD, UNKNOWND, WATCHED, FAILED, TIER0], spares: [], stale: [] } })
     const order = () => v.rows().map(tr => v.cells(tr)[DEVICE_COL])
 
     await v.click(v.byText('th', 'Verdict'))
     check('the Verdict header sorts by triage severity, not the verdict string',
-          order().join() === ['/dev/sdf', '/dev/sdg', '/dev/sdh', '/dev/sdi'].join())
+          order().join() === ['/dev/sdf', '/dev/sdg', '/dev/sdh', '/dev/sdi', '/dev/sdt'].join())
+    check('a row with no verdict at all is last in the ascending sort',
+          order()[order().length - 1] === '/dev/sdt')
 
     await v.click(v.byText('th', 'Verdict'))
     check('clicking it again reverses the severity order',
-          order().join() === ['/dev/sdi', '/dev/sdh', '/dev/sdg', '/dev/sdf'].join())
+          order().join() === ['/dev/sdi', '/dev/sdh', '/dev/sdg', '/dev/sdf', '/dev/sdt'].join())
+    check('...and the unranked row is STILL last, not led to the front',
+          order()[order().length - 1] === '/dev/sdt')
 
     v.unmount()
   }

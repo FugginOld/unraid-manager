@@ -75,15 +75,23 @@ function verdictClass (disk) {
 // leads (FAIL before WATCH, since a failure outranks a warning); UNKNOWN is a
 // claim the assessment could not make; OK is a clean result. Alphabetical
 // order puts WATCH last, which is wrong for the one sort an operator actually
-// wants on this column. Everything with no real verdict at all - tier 0,
-// no-disk, not-yet-assessed - sorts after every value that has one, fleet.js's
-// rule for a state it does not recognise, restated for a verdict this column
-// cannot know.
+// wants on this column.
+//
+// Fix round 2, blocking: everything with no real verdict at all - tier 0,
+// no-disk, not-yet-assessed - must sort after every value that HAS one, in
+// BOTH directions. fleet.js's stateRank gets away with a numeric sentinel
+// (a large "LAST" rank) because sortNodes is ascending-only; this column is
+// not. compareValues multiplies a numeric result by the direction, so a
+// sentinel number flips sides on the second click - descending led with
+// every unranked row, the exact "temp-less disk sorts as the coldest drive"
+// trap sort.js's own header warns about, restated for verdicts. null is not
+// a number: compareValues' missing-value branch is explicitly NOT multiplied
+// by direction ("last means last either way"), so returning null here reuses
+// that branch instead of re-triggering the bug it exists to prevent.
 const VERDICT_RANK = { FAIL: 0, WATCH: 1, UNKNOWN: 2, OK: 3 }
-const VERDICT_LAST = Object.keys(VERDICT_RANK).length
 function verdictRank (disk) {
   const rank = VERDICT_RANK[verdictKey(disk)]
-  return rank === undefined ? VERDICT_LAST : rank
+  return rank === undefined ? null : rank
 }
 
 const expanded = ref(null)
